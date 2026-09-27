@@ -1,6 +1,6 @@
 {
   "name": "simple-sync",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cross-platform sync plugin for Obsidian",
   "main": "main.js",
   "scripts": {

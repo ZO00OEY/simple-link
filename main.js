@@ -1219,10 +1219,10 @@ var DEFAULT_SETTINGS = {
   setupRepoUrl: "",
   setupMutationStarted: false,
   viewRefreshDelaySeconds: 7,
-  autoCommitIdleMinutes: 5,
-  autoPushIdleMinutes: 30,
-  maxUncommittedMinutes: 30,
-  maxUnpushedMinutes: 60,
+  autoCommitIdleMinutes: 30,
+  autoPushIdleMinutes: 5,
+  maxUncommittedMinutes: 60,
+  maxUnpushedMinutes: 120,
   pullOnStartup: true,
   autoPullIntervalMinutes: 5,
   pendingMergePushAfterResolve: false,
@@ -4155,10 +4155,10 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian3.Setting(advancedBody).setName("\u7A7A\u95F2\u540E\u81EA\u52A8 Commit\uFF08\u5206\u949F\uFF09").setDesc("\u6301\u7EED\u591A\u4E45\u6CA1\u6709\u6587\u4EF6\u53D8\u5316\u540E\u521B\u5EFA Commit\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "autoCommitIdleMinutes", 5));
-    new import_obsidian3.Setting(advancedBody).setName("\u7A7A\u95F2\u540E\u81EA\u52A8 Push\uFF08\u5206\u949F\uFF09").setDesc("\u6301\u7EED\u591A\u4E45\u6CA1\u6709\u6587\u4EF6\u53D8\u5316\u540E\uFF0C\u5148\u8865\u4E00\u6B21 Commit\uFF0C\u518D Fetch\u3001\u6309\u9700 Merge \u5E76 Push\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "autoPushIdleMinutes", 30));
-    new import_obsidian3.Setting(advancedBody).setName("\u5F3A\u5236 Commit \u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u5230\u70B9\u7ACB\u5373 Commit \u5176\u4ED6\u5DF2\u7A33\u5B9A\u6587\u4EF6\uFF1B\u6700\u8FD1\u4ECD\u5728\u4FEE\u6539\u7684\u6587\u4EF6\u4F1A\u8DF3\u8FC7\uFF0C\u7B49\u5F85\u4E0B\u4E00\u6B21\u81EA\u52A8 Commit\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "maxUncommittedMinutes", 30));
-    new import_obsidian3.Setting(advancedBody).setName("\u5F3A\u5236 Push \u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u6700\u65E9\u7684\u5F85\u4E0A\u4F20 Commit \u5230\u70B9\u540E\uFF0C\u5148\u5F3A\u5236 Commit \u5F53\u524D\u672C\u673A\u66F4\u6539\uFF08\u5305\u62EC\u6B63\u5728\u7F16\u8F91\u7684\u6587\u4EF6\uFF09\uFF0C\u518D Fetch\u3001\u6309\u9700 Merge \u5E76 Push\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "maxUnpushedMinutes", 60));
+    new import_obsidian3.Setting(advancedBody).setName("\u7A7A\u95F2\u540E\u81EA\u52A8 Commit\uFF08\u5206\u949F\uFF09").setDesc("\u6301\u7EED\u591A\u4E45\u6CA1\u6709\u6587\u4EF6\u53D8\u5316\u540E\u521B\u5EFA Commit\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "autoCommitIdleMinutes", 30));
+    new import_obsidian3.Setting(advancedBody).setName("\u7A7A\u95F2\u540E\u81EA\u52A8 Push\uFF08\u5206\u949F\uFF09").setDesc("\u5DF2\u6709\u5F85\u4E0A\u4F20 Commit \u4E14\u6587\u4EF6\u505C\u6B62\u53D8\u5316\u591A\u4E45\u540E\u6267\u884C\uFF1B\u5F00\u59CB\u65F6\u4F1A\u5148\u8865\u4E00\u6B21 Commit\uFF0C\u518D Fetch\u3001\u6309\u9700 Merge \u5E76 Push\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "autoPushIdleMinutes", 5));
+    new import_obsidian3.Setting(advancedBody).setName("\u5F3A\u5236 Commit \u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u5230\u70B9\u7ACB\u5373 Commit \u5176\u4ED6\u5DF2\u7A33\u5B9A\u6587\u4EF6\uFF1B\u6700\u8FD1\u4ECD\u5728\u4FEE\u6539\u7684\u6587\u4EF6\u4F1A\u8DF3\u8FC7\uFF0C\u7B49\u5F85\u4E0B\u4E00\u6B21\u81EA\u52A8 Commit\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "maxUncommittedMinutes", 60));
+    new import_obsidian3.Setting(advancedBody).setName("\u5F3A\u5236 Push \u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u6700\u65E9\u7684\u5F85\u4E0A\u4F20 Commit \u5230\u70B9\u540E\uFF0C\u5148\u5F3A\u5236 Commit \u5F53\u524D\u672C\u673A\u66F4\u6539\uFF08\u5305\u62EC\u6B63\u5728\u7F16\u8F91\u7684\u6587\u4EF6\uFF09\uFF0C\u518D Fetch\u3001\u6309\u9700 Merge \u5E76 Push\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "maxUnpushedMinutes", 120));
     new import_obsidian3.Setting(advancedBody).setName("\u542F\u52A8\u540E\u81EA\u52A8 Commit\u3001Fetch \u5E76 Merge").setDesc("\u542F\u52A8\u540E\u5148 Commit \u9664\u6B63\u5728\u4FEE\u6539\u5916\u7684\u6587\u4EF6\uFF0C\u518D\u83B7\u53D6\u4E91\u7AEF\u6700\u65B0\u63D0\u4EA4\u5E76\u5408\u5E76\u5230\u672C\u673A\uFF1B\u4E0D\u4F1A\u7ACB\u5373 Push\u3002").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.pullOnStartup).onChange(async (value) => {
         this.plugin.settings.pullOnStartup = value;

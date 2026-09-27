@@ -170,10 +170,10 @@ const DEFAULT_SETTINGS: PluginSettings = {
   setupRepoUrl: "",
   setupMutationStarted: false,
   viewRefreshDelaySeconds: 7,
-  autoCommitIdleMinutes: 5,
-  autoPushIdleMinutes: 30,
-  maxUncommittedMinutes: 30,
-  maxUnpushedMinutes: 60,
+  autoCommitIdleMinutes: 30,
+  autoPushIdleMinutes: 5,
+  maxUncommittedMinutes: 60,
+  maxUnpushedMinutes: 120,
   pullOnStartup: true,
   autoPullIntervalMinutes: 5,
   pendingMergePushAfterResolve: false,
@@ -3471,19 +3471,19 @@ class SimpleSyncSettingTab extends PluginSettingTab {
     new Setting(advancedBody)
       .setName("空闲后自动 Commit（分钟）")
       .setDesc("持续多久没有文件变化后创建 Commit。设为 0 可关闭。")
-      .addText((text) => this.addTimingInput(text, "autoCommitIdleMinutes", 5));
+      .addText((text) => this.addTimingInput(text, "autoCommitIdleMinutes", 30));
     new Setting(advancedBody)
       .setName("空闲后自动 Push（分钟）")
-      .setDesc("持续多久没有文件变化后，先补一次 Commit，再 Fetch、按需 Merge 并 Push。设为 0 可关闭。")
-      .addText((text) => this.addTimingInput(text, "autoPushIdleMinutes", 30));
+      .setDesc("已有待上传 Commit 且文件停止变化多久后执行；开始时会先补一次 Commit，再 Fetch、按需 Merge 并 Push。设为 0 可关闭。")
+      .addText((text) => this.addTimingInput(text, "autoPushIdleMinutes", 5));
     new Setting(advancedBody)
       .setName("强制 Commit 间隔（分钟）")
       .setDesc("到点立即 Commit 其他已稳定文件；最近仍在修改的文件会跳过，等待下一次自动 Commit。设为 0 可关闭。")
-      .addText((text) => this.addTimingInput(text, "maxUncommittedMinutes", 30));
+      .addText((text) => this.addTimingInput(text, "maxUncommittedMinutes", 60));
     new Setting(advancedBody)
       .setName("强制 Push 间隔（分钟）")
       .setDesc("最早的待上传 Commit 到点后，先强制 Commit 当前本机更改（包括正在编辑的文件），再 Fetch、按需 Merge 并 Push。设为 0 可关闭。")
-      .addText((text) => this.addTimingInput(text, "maxUnpushedMinutes", 60));
+      .addText((text) => this.addTimingInput(text, "maxUnpushedMinutes", 120));
     new Setting(advancedBody)
       .setName("启动后自动 Commit、Fetch 并 Merge")
       .setDesc("启动后先 Commit 除正在修改外的文件，再获取云端最新提交并合并到本机；不会立即 Push。")
