@@ -1,0 +1,333 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve, sep } from "node:path";
+import { createRequire } from "node:module";
+import esbuild from "esbuild";
+
+const require = createRequire(import.meta.url);
+const folder = await mkdtemp(join(tmpdir(), "simple-sync-test-"));
+let githubFixtureRemote = "";
+const run = (cwd, args) => execFileSync("git", args.map((arg) =>
+  args[0] === "fetch" && arg === "https://github.com/example/vault.git" && githubFixtureRemote ? githubFixtureRemote : arg
+), { cwd, encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();
+
+try {
+  const bundle = join(folder, "onboarding.cjs");
+  await esbuild.build({
+    entryPoints: ["src/onboarding.ts"], bundle: true, platform: "node", format: "cjs", outfile: bundle,
+    plugins: [{
+      name: "obsidian-test-stub",
+      setup(build) {
+        build.onResolve({ filter: /^obsidian$/ }, () => ({ path: "obsidian", namespace: "test-stub" }));
+        build.onLoad({ filter: /.*/, namespace: "test-stub" }, () => ({
+          contents: "exports.requestUrl = async () => { throw new Error('requestUrl should not be used in this test'); };",
+          loader: "js"
+        }));
+      }
+    }]
+  });
+  globalThis.require = require;
+  const { GitSetup, parseGithubRepoUrl, explainSetupError, missingSetupIgnoreRules } = require(bundle);
+  assert.equal(parseGithubRepoUrl("https://github.com/example/vault.git").name, "vault");
+  assert.throws(() => parseGithubRepoUrl("https://gitee.com/example/vault"));
+  assert.match(explainSetupError(new Error("repository not found")), /地址错误|无权访问/);
+  const existingIgnore = ".obsidian/cache/\n.smart-env\n.obsidian/plugins/obsidian-git/data.json # old inline note\n";
+  const missingIgnore = missingSetupIgnoreRules(existingIgnore);
+  assert(!missingIgnore.includes(".obsidian/cache/"));
+  assert(!missingIgnore.includes(".smart-env/"));
+  assert(missingIgnore.includes(".obsidian/plugins/obsidian-git/data.json"));
+  let deviceCode = "";
+  const authCalls = [];
+  const authSetup = new GitSetup(folder, async (program, args, _timeoutMs, onOutput) => {
+    authCalls.push(`${program} ${args.join(" ")}`);
+    if (args[0] === "auth" && args[1] === "login") onOutput?.("First copy your one-time code: ABCD-1234");
+    return "ok";
+  });
+  await authSetup.login((code) => { deviceCode = code; });
+  assert.equal(deviceCode, "ABCD-1234");
+  assert(authCalls.some((call) => call.includes("auth login") && call.includes("--web") && call.includes("--clipboard")));
+  assert(authCalls.some((call) => call.includes("auth setup-git --hostname github.com")));
+
+  const bare = join(folder, "remote.git");
+  githubFixtureRemote = bare;
+  const seed = join(folder, "seed");
+  const vault = join(folder, "vault");
+  await mkdir(seed);
+  await mkdir(vault);
+  run(folder, ["init", "--bare", bare]);
+  run(seed, ["init", "-b", "main"]);
+  run(seed, ["config", "user.name", "Test"]);
+  run(seed, ["config", "user.email", "test@example.com"]);
+  await writeFile(join(seed, "shared.md"), "remote version\n");
+  await writeFile(join(seed, "identical.md"), "same content on both sides\n");
+  await writeFile(join(seed, "remote.md"), "remote only\n");
+  await writeFile(join(seed, ".gitignore"), "remote-only/\n");
+  run(seed, ["add", "-A"]);
+  run(seed, ["commit", "-m", "remote initial"]);
+  run(seed, ["remote", "add", "origin", bare]);
+  run(seed, ["push", "-u", "origin", "HEAD:main"]);
+  let sha = run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]);
+
+  run(vault, ["init", "-b", "main"]);
+  run(vault, ["config", `url.${bare.replaceAll("\\", "/")}.insteadOf`, "https://github.com/example/vault.git"]);
+  await writeFile(join(vault, "shared.md"), "local version\n");
+  await writeFile(join(vault, "identical.md"), "same content on both sides\n");
+  await writeFile(join(vault, "local.md"), "local only\n");
+  const originalIgnore = "# personal rules\r\ncustom/\r\n.smart-env\r\n\r\n";
+  await writeFile(join(vault, ".gitignore"), originalIgnore);
+  const gitCalls = [];
+  const command = async (program, args) => {
+    if (program === "gh") {
+      if (args[0] === "auth") return "logged in";
+      if (args[0] === "repo") return JSON.stringify({ isPrivate: true, viewerPermission: "WRITE", defaultBranchRef: { name: "main" } });
+      if (args[1].includes("/branches/")) return JSON.stringify({ commit: { sha } });
+      if (args[1].includes("/git/trees/")) return JSON.stringify({ tree: run(folder, ["--git-dir", bare, "ls-tree", "-r", sha]).split(/\r?\n/).filter(Boolean).map((line) => {
+        const match = /^\d+ (\w+) ([0-9a-f]+)\t(.+)$/.exec(line);
+        if (!match) throw new Error(`Unexpected tree entry ${line}`);
+        return { type: match[1], sha: match[2], path: match[3], size: 20 };
+      }) });
+      if (args[1].includes("/git/blobs/")) {
+        const blobSha = args[1].split("/").pop();
+        return JSON.stringify({ encoding: "base64", content: Buffer.from(run(folder, ["--git-dir", bare, "cat-file", "blob", blobSha])).toString("base64") });
+      }
+      throw new Error(`Unexpected gh ${args.join(" ")}`);
+    }
+    gitCalls.push(args);
+    return run(vault, args);
+  };
+  const setup = new GitSetup(vault, command);
+  const repo = await setup.verifyRepository("https://github.com/example/vault.git");
+  const preview = await setup.preview(repo);
+  assert.deepEqual(preview.overlaps, [".gitignore", "shared.md"]);
+  assert(!preview.overlaps.includes("identical.md"));
+  assert.equal(preview.identicalCount, 1);
+  assert.deepEqual(preview.localOnly, ["local.md"]);
+  assert.deepEqual(preview.remoteOnly, ["remote.md"]);
+  const content = await setup.readOverlap(repo, preview, "shared.md");
+  assert.equal(content.local.trim(), "local version");
+  assert.equal(content.remote.trim(), "remote version");
+  await setup.finish(repo, preview, { ".gitignore": "local", "shared.md": "remote" }, { name: "Test", email: "test@example.com" });
+  assert.equal((await readFile(join(vault, "shared.md"), "utf8")).trim(), "remote version");
+  assert.equal((await readFile(join(vault, "local.md"), "utf8")).trim(), "local only");
+  assert.equal((await readFile(join(vault, "remote.md"), "utf8")).trim(), "remote only");
+  const connectedIgnore = await readFile(join(vault, ".gitignore"), "utf8");
+  assert(connectedIgnore.startsWith(originalIgnore));
+  assert.match(connectedIgnore, /\.obsidian\/plugins\/simple-sync\/data\.json/);
+  assert.equal(connectedIgnore.split(".obsidian/plugins/simple-sync/data.json").length, 2);
+  assert(!connectedIgnore.includes(".smart-env/"));
+  assert(!connectedIgnore.includes("remote-only/"));
+  assert.equal(run(vault, ["status", "--porcelain"]), "");
+  assert.equal(run(vault, ["rev-parse", "HEAD"]), run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]));
+  const secondDevice = join(folder, "second-device");
+  run(folder, ["clone", "-b", "main", bare, secondDevice]);
+  run(secondDevice, ["config", "user.name", "Other Device"]);
+  run(secondDevice, ["config", "user.email", "other@example.com"]);
+  await writeFile(join(secondDevice, "remote-ahead.md"), "remote newer note\n");
+  run(secondDevice, ["add", "-A"]);
+  run(secondDevice, ["commit", "-m", "remote advance"]);
+  run(secondDevice, ["push", "origin", "HEAD:main"]);
+  await writeFile(join(vault, "local-ahead.md"), "local newer note\n");
+  sha = run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]);
+  const aheadRepo = await setup.verifyRepository("https://github.com/example/vault.git");
+  const aheadPreview = await setup.preview(aheadRepo);
+  assert.equal(aheadPreview.alreadyLinked, false);
+  assert.equal(aheadPreview.relatedHistory, true);
+  assert.deepEqual(aheadPreview.overlaps, []);
+  await setup.finish(aheadRepo, aheadPreview, {}, { name: "Test", email: "test@example.com" });
+  assert.equal(run(vault, ["show", "HEAD:local-ahead.md"]), "local newer note");
+  assert.equal(run(vault, ["show", "HEAD:remote-ahead.md"]), "remote newer note");
+  assert.equal(run(vault, ["rev-parse", "HEAD"]), run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]));
+  await mkdir(join(vault, ".obsidian", "plugins", "obsidian-git"), { recursive: true });
+  await mkdir(join(vault, "custom"));
+  await writeFile(join(vault, ".obsidian", "plugins", "obsidian-git", "data.json"), "already tracked\n");
+  await writeFile(join(vault, "custom", "legacy.txt"), "old tracked custom exclusion\n");
+  run(vault, ["add", "-f", ".obsidian/plugins/obsidian-git/data.json"]);
+  run(vault, ["add", "-f", "custom/legacy.txt"]);
+  run(vault, ["commit", "-m", "tracked ignored fixture"]);
+  run(vault, ["push", "origin", "HEAD:main"]);
+  const linkedBaseIgnore = connectedIgnore.replace(/\.obsidian\/workspace-mobile\.json\r?\n/, "");
+  assert.notEqual(linkedBaseIgnore, connectedIgnore);
+  await writeFile(join(vault, ".gitignore"), linkedBaseIgnore);
+  run(vault, ["add", ".gitignore"]);
+  run(vault, ["commit", "-m", "remove one ignore rule"]);
+  run(vault, ["push", "origin", "HEAD:main"]);
+  sha = run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]);
+  const linkedRepo = await setup.verifyRepository("https://github.com/example/vault.git");
+  const linkedPreview = await setup.preview(linkedRepo);
+  assert.equal(linkedPreview.alreadyLinked, true);
+  assert.deepEqual(linkedPreview.missingIgnoreRules, [".obsidian/workspace-mobile.json"]);
+  assert.deepEqual(linkedPreview.overlaps, []);
+  assert(linkedPreview.trackedExcludedLocal.includes(".obsidian/plugins/obsidian-git/data.json"));
+  assert(linkedPreview.trackedExcludedRemote.includes(".obsidian/plugins/obsidian-git/data.json"));
+  assert(linkedPreview.trackedExcludedLocal.includes("custom/legacy.txt"));
+  assert(linkedPreview.trackedExcludedRemote.includes("custom/legacy.txt"));
+  await writeFile(join(vault, ".gitignore"), `${linkedBaseIgnore}# changed after preview\n`);
+  await assert.rejects(() => setup.finish(linkedRepo, linkedPreview, {}, { name: "Test", email: "test@example.com" }), /\.gitignore 在预览后发生变化/);
+  await writeFile(join(vault, ".gitignore"), linkedBaseIgnore);
+  await setup.finish(linkedRepo, linkedPreview, {}, { name: "Test", email: "test@example.com" });
+  const linkedResultIgnore = await readFile(join(vault, ".gitignore"), "utf8");
+  assert(linkedResultIgnore.startsWith(linkedBaseIgnore));
+  assert.equal(linkedResultIgnore.split(".obsidian/workspace-mobile.json").length, 2);
+  sha = run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]);
+  const settledRepo = await setup.verifyRepository("https://github.com/example/vault.git");
+  const settledPreview = await setup.preview(settledRepo);
+  assert.deepEqual(settledPreview.missingIgnoreRules, []);
+  const settledHead = run(vault, ["rev-parse", "HEAD"]);
+  await setup.finish(settledRepo, settledPreview, {}, { name: "Test", email: "test@example.com" });
+  assert.equal(run(vault, ["rev-parse", "HEAD"]), settledHead);
+  assert.equal(await readFile(join(vault, ".gitignore"), "utf8"), linkedResultIgnore);
+  assert.equal(run(vault, ["ls-files", ".obsidian/plugins/obsidian-git/data.json"]), ".obsidian/plugins/obsidian-git/data.json");
+  assert.equal(run(vault, ["ls-files", "custom/legacy.txt"]), "custom/legacy.txt");
+  run(vault, ["switch", "-c", "work-branch"]);
+  await assert.rejects(() => setup.preview(settledRepo), /本机当前分支是 work-branch/);
+  run(vault, ["switch", "main"]);
+  const rebuildRepo = await setup.verifyRepository("https://github.com/example/vault.git");
+  const rebuildPreview = await setup.preview(rebuildRepo);
+  const rebuildStart = gitCalls.length;
+  await setup.finish(rebuildRepo, rebuildPreview, {}, { name: "Test", email: "test@example.com" }, undefined, new Set(), true);
+  assert(gitCalls.slice(rebuildStart).some((args) => args.join(" ") === "rm -r -f --cached --ignore-unmatch -- ."));
+  assert(gitCalls.slice(rebuildStart).some((args) => args.join(" ") === "add -A"));
+  assert.equal(await readFile(join(vault, ".obsidian", "plugins", "obsidian-git", "data.json"), "utf8"), "already tracked\n");
+  assert.equal(run(vault, ["ls-files", ".obsidian/plugins/obsidian-git/data.json"]), "");
+  assert.equal(run(vault, ["ls-files", "custom/legacy.txt"]), "");
+  assert.equal(run(folder, ["--git-dir", bare, "ls-tree", "-r", "refs/heads/main", "--", ".obsidian/plugins/obsidian-git/data.json"]), "");
+  assert.equal(run(folder, ["--git-dir", bare, "ls-tree", "-r", "refs/heads/main", "--", "custom/legacy.txt"]), "");
+  await mkdir(join(vault, ".obsidian", "plugins", "editing-plugin"), { recursive: true });
+  await writeFile(join(vault, ".obsidian", "plugins", "editing-plugin", "main.js"), "old build\n");
+  run(vault, ["add", "-A"]);
+  run(vault, ["commit", "-m", "add plugin fixture"]);
+  run(vault, ["push", "origin", "HEAD:main"]);
+  sha = run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]);
+  await writeFile(join(vault, "stable.md"), "ready to sync\n");
+  await writeFile(join(vault, ".obsidian", "plugins", "editing-plugin", "settings.json"), "before preview\n");
+  const changingRepo = await setup.verifyRepository("https://github.com/example/vault.git");
+  const changingPreview = await setup.preview(changingRepo);
+  await writeFile(join(vault, ".obsidian", "plugins", "editing-plugin", "main.js"), "new build\n");
+  await writeFile(join(vault, ".obsidian", "plugins", "editing-plugin", "new.js"), "new file\n");
+  assert.deepEqual(changingPreview.trackedExcludedLocal, []);
+  const skipped = await setup.finish(changingRepo, changingPreview, {}, { name: "Test", email: "test@example.com" }, undefined, new Set(), true);
+  assert(skipped.includes(".obsidian/plugins/editing-plugin/main.js"));
+  assert(skipped.includes(".obsidian/plugins/editing-plugin/settings.json"));
+  assert(skipped.includes(".obsidian/plugins/editing-plugin/new.js"));
+  assert.equal(run(vault, ["show", "HEAD:stable.md"]), "ready to sync");
+  assert.equal(run(vault, ["show", "HEAD:.obsidian/plugins/editing-plugin/main.js"]), "old build");
+  assert.match(run(vault, ["status", "--porcelain"]), /editing-plugin/);
+  assert.equal(run(vault, ["rev-parse", "HEAD"]), run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]));
+  sha = run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]);
+  const nestedVault = join(vault, "nested");
+  await mkdir(nestedVault);
+  run(nestedVault, ["init"]);
+  await assert.rejects(() => setup.preview(linkedRepo), /另一个 Git 仓库/);
+
+  const emptyBare = join(folder, "empty.git");
+  const freshVault = join(folder, "fresh-vault");
+  await mkdir(freshVault);
+  run(folder, ["init", "--bare", emptyBare]);
+  await writeFile(join(freshVault, "first.md"), "first note\n");
+  await mkdir(join(freshVault, ".obsidian", "plugins", "editing-plugin"), { recursive: true });
+  await writeFile(join(freshVault, ".obsidian", "plugins", "editing-plugin", "main.js"), "work in progress\n");
+  await writeFile(join(freshVault, ".obsidian", "plugins", "editing-plugin", "manifest.json"), "work in progress\n");
+  const freshCommand = async (program, args) => {
+    if (program === "gh") {
+      if (args[0] === "auth") return "logged in";
+      if (args[0] === "repo") return JSON.stringify({ isPrivate: true, viewerPermission: "ADMIN", defaultBranchRef: null });
+      throw new Error(`Unexpected gh ${args.join(" ")}`);
+    }
+    if (args[0] === "remote" && args[1] === "add") return run(freshVault, ["remote", "add", "origin", emptyBare]);
+    return run(freshVault, args);
+  };
+  const freshSetup = new GitSetup(freshVault, freshCommand);
+  const freshRepo = await freshSetup.verifyRepository("https://github.com/example/empty.git");
+  const freshPreview = await freshSetup.preview(freshRepo);
+  assert.equal(freshPreview.localRoot, null);
+  assert.deepEqual(freshPreview.overlaps, []);
+  await writeFile(join(freshVault, ".obsidian", "plugins", "editing-plugin", "main.js"), "new work in progress\n");
+  await writeFile(join(freshVault, ".obsidian", "plugins", "editing-plugin", "new.js"), "new plugin file\n");
+  const freshSkipped = await freshSetup.finish(freshRepo, freshPreview, {}, { name: "Test", email: "test@example.com" }, undefined,
+    new Set([".obsidian/plugins/editing-plugin/main.js"]));
+  assert(freshSkipped.includes(".obsidian/plugins/editing-plugin/main.js"));
+  assert(freshSkipped.includes(".obsidian/plugins/editing-plugin/manifest.json"));
+  assert(freshSkipped.includes(".obsidian/plugins/editing-plugin/new.js"));
+  assert.equal(run(freshVault, ["show", "HEAD:first.md"]), "first note");
+  assert.equal(run(freshVault, ["ls-files", ".obsidian/plugins/editing-plugin/main.js"]), "");
+  assert.equal(await readFile(join(freshVault, ".obsidian", "plugins", "editing-plugin", "main.js"), "utf8"), "new work in progress\n");
+  assert.equal(run(freshVault, ["rev-parse", "HEAD"]), run(folder, ["--git-dir", emptyBare, "rev-parse", "refs/heads/main"]));
+
+  const unversionedVault = join(folder, "unversioned-vault");
+  await mkdir(unversionedVault);
+  await writeFile(join(unversionedVault, "shared.md"), "new local version\n");
+  await writeFile(join(unversionedVault, "new-local.md"), "new local only\n");
+  await writeFile(join(unversionedVault, ".gitignore"), "local-unused/\n");
+  const unversionedCommand = async (program, args) => {
+    if (program === "gh") return command(program, args);
+    if (args[0] === "remote" && args[1] === "add") return run(unversionedVault, ["remote", "add", "origin", bare]);
+    return run(unversionedVault, args);
+  };
+  const unversionedSetup = new GitSetup(unversionedVault, unversionedCommand);
+  const unversionedRepo = await unversionedSetup.verifyRepository("https://github.com/example/vault.git");
+  const unversionedPreview = await unversionedSetup.preview(unversionedRepo);
+  assert.equal(unversionedPreview.localRoot, null);
+  assert.deepEqual(unversionedPreview.overlaps, [".gitignore", "shared.md"]);
+  await unversionedSetup.finish(unversionedRepo, unversionedPreview, { ".gitignore": "remote", "shared.md": "local" }, { name: "Test", email: "test@example.com" });
+  assert.equal((await readFile(join(unversionedVault, "shared.md"), "utf8")).trim(), "new local version");
+  assert.equal((await readFile(join(unversionedVault, "remote.md"), "utf8")).trim(), "remote only");
+  const adoptedIgnore = await readFile(join(unversionedVault, ".gitignore"), "utf8");
+  assert(adoptedIgnore.startsWith(originalIgnore));
+  assert(!adoptedIgnore.includes("local-unused/"));
+  assert.match(adoptedIgnore, /\.obsidian\/plugins\/simple-sync\/data\.json/);
+  assert.equal(adoptedIgnore.split(".obsidian/plugins/simple-sync/data.json").length, 2);
+  assert.equal(run(unversionedVault, ["rev-parse", "HEAD"]), run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]));
+  sha = run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]);
+  const collisionVault = join(folder, "collision-vault");
+  await mkdir(collisionVault);
+  await writeFile(join(collisionVault, ".gitignore"), "remote.md\n");
+  await writeFile(join(collisionVault, "remote.md"), "ignored local version\n");
+  const collisionSetup = new GitSetup(collisionVault, async (program, args) => program === "gh" ? command(program, args) : run(collisionVault, args));
+  const collisionRepo = await collisionSetup.verifyRepository("https://github.com/example/vault.git");
+  await assert.rejects(() => collisionSetup.preview(collisionRepo), /远端文件与本机已忽略的现有路径重名/);
+  const negationVault = join(folder, "negation-vault");
+  await mkdir(join(negationVault, ".obsidian", "plugins", "obsidian-git"), { recursive: true });
+  run(negationVault, ["init", "-b", "main"]);
+  await writeFile(join(negationVault, ".gitignore"), ".obsidian/plugins/obsidian-git/data.json\n!.obsidian/plugins/obsidian-git/data.json\n");
+  await writeFile(join(negationVault, ".obsidian", "plugins", "obsidian-git", "data.json"), "still tracked\n");
+  run(negationVault, ["add", "-A"]);
+  run(negationVault, ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "negation fixture"]);
+  const negationSetup = new GitSetup(negationVault, async (program, args) => {
+    if (program === "gh") return command(program, args);
+    if (args[0] === "remote" && args[1] === "add") return run(negationVault, ["remote", "add", "origin", bare]);
+    return run(negationVault, args);
+  });
+  const negationRepo = await negationSetup.verifyRepository("https://github.com/example/vault.git");
+  const negationPreview = await negationSetup.preview(negationRepo);
+  await assert.rejects(() => negationSetup.finish(negationRepo, negationPreview, { ".gitignore": "local" }, { name: "Test", email: "test@example.com" }, undefined, new Set(), true), /不能确认 \.gitignore 会排除/);
+  assert.equal(await readFile(join(negationVault, ".obsidian", "plugins", "obsidian-git", "data.json"), "utf8"), "still tracked\n");
+  const existingVault = join(folder, "existing-vault");
+  await mkdir(join(existingVault, ".obsidian", "plugins", "obsidian-git"), { recursive: true });
+  run(existingVault, ["init", "-b", "main"]);
+  await writeFile(join(existingVault, ".gitignore"), "custom-existing/\n.obsidian/plugins/obsidian-git/data.json\n");
+  await writeFile(join(existingVault, ".obsidian", "plugins", "obsidian-git", "data.json"), "keep this local\n");
+  run(existingVault, ["add", ".gitignore"]);
+  run(existingVault, ["add", "-f", ".obsidian/plugins/obsidian-git/data.json"]);
+  run(existingVault, ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "old local history"]);
+  const existingCommand = async (program, args) => {
+    if (program === "gh") return command(program, args);
+    if (args[0] === "remote" && args[1] === "add") return run(existingVault, ["remote", "add", "origin", bare]);
+    return run(existingVault, args);
+  };
+  const existingSetup = new GitSetup(existingVault, existingCommand);
+  const existingRepo = await existingSetup.verifyRepository("https://github.com/example/vault.git");
+  const existingPreview = await existingSetup.preview(existingRepo);
+  assert.equal(existingPreview.alreadyLinked, false);
+  assert(existingPreview.trackedExcludedLocal.includes(".obsidian/plugins/obsidian-git/data.json"));
+  await existingSetup.finish(existingRepo, existingPreview, { ".gitignore": "local" }, { name: "Test", email: "test@example.com" }, undefined, new Set(), true);
+  assert.equal(await readFile(join(existingVault, ".obsidian", "plugins", "obsidian-git", "data.json"), "utf8"), "keep this local\n");
+  assert.equal(run(existingVault, ["ls-files", ".obsidian/plugins/obsidian-git/data.json"]), "");
+  assert.equal(run(folder, ["--git-dir", bare, "ls-tree", "-r", "refs/heads/main", "--", ".obsidian/plugins/obsidian-git/data.json"]), "");
+  console.log("Onboarding isolated merge and push: passed");
+} finally {
+  const target = resolve(folder);
+  if (!target.startsWith(resolve(tmpdir()) + sep)) throw new Error("Unexpected test cleanup path");
+  await rm(target, { recursive: true, force: true });
+}

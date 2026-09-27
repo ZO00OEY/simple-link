@@ -1,0 +1,6 @@
+node_modules/
+.obsidian/
+data.json
+sync-settings.json
+npm-debug.log*
+*.log
