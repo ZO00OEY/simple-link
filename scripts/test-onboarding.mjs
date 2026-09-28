@@ -116,6 +116,7 @@ try {
   assert(connectedIgnore.startsWith(originalIgnore));
   assert.match(connectedIgnore, /\.obsidian\/plugins\/simple-sync\/data\.json/);
   assert.equal(connectedIgnore.split(".obsidian/plugins/simple-sync/data.json").length, 2);
+  assert.equal(connectedIgnore.split(".obsidian/plugins/simple-link/data.json").length, 2);
   assert(!connectedIgnore.includes(".smart-env/"));
   assert(!connectedIgnore.includes("remote-only/"));
   assert.equal(run(vault, ["status", "--porcelain"]), "");
@@ -278,6 +279,7 @@ try {
   assert(!adoptedIgnore.includes("local-unused/"));
   assert.match(adoptedIgnore, /\.obsidian\/plugins\/simple-sync\/data\.json/);
   assert.equal(adoptedIgnore.split(".obsidian/plugins/simple-sync/data.json").length, 2);
+  assert.equal(adoptedIgnore.split(".obsidian/plugins/simple-link/data.json").length, 2);
   assert.equal(run(unversionedVault, ["rev-parse", "HEAD"]), run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]));
   sha = run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]);
   const collisionVault = join(folder, "collision-vault");

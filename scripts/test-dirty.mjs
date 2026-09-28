@@ -54,6 +54,7 @@ assert.deepEqual(
   [{ type: "move", fromPath: "old.md", path: "new.md" }]
 );
 assert.equal(module.shouldIgnore(".obsidian/plugins/simple-sync/data.json"), true);
+assert.equal(module.shouldIgnore(".obsidian/plugins/simple-link/data.json"), true);
 assert.equal(module.shouldIgnore(".obsidian/cache/index.json"), true);
 assert.equal(module.shouldIgnore("folder/draft.tmp"), true);
 assert.equal(module.shouldIgnore("folder/node_modules/package/index.js"), true);

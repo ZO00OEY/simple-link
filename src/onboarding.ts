@@ -58,6 +58,7 @@ export const SETUP_GITIGNORE = [
   ".trash/",
   "# Local credentials and agent output",
   ".obsidian/plugins/simple-sync/data.json",
+  ".obsidian/plugins/simple-link/data.json",
   ".obsidian/plugins/obsidian-git/data.json",
   ".obsidian/plugins/recent-files-obsidian/data.json",
   ".codex/output/",
@@ -414,7 +415,7 @@ export class GitSetup {
       throw new Error(`本机当前分支是 ${localBranch}，远端默认分支是 ${repo.branch}。请先切换到要同步的 ${repo.branch} 分支，再重新检查。`);
     }
     if (localRoot) {
-      if (trackedLocal.includes(".obsidian/plugins/simple-sync/data.json")) {
+      if ([".obsidian/plugins/simple-sync/data.json", ".obsidian/plugins/simple-link/data.json"].some((path) => trackedLocal.includes(path))) {
         throw new Error("本地 Git 正在跟踪插件的本机凭据文件 data.json。请先停止跟踪该文件，再继续接入。");
       }
       const staged = await this.run("git", ["ls-files", "--stage", "-z"]);
@@ -432,7 +433,7 @@ export class GitSetup {
         remoteBlobs[item.path] = { sha: item.sha ?? "", size: item.size ?? 0 };
         return item.path;
       }).sort();
-      if (remoteFiles.includes(".obsidian/plugins/simple-sync/data.json")) {
+      if ([".obsidian/plugins/simple-sync/data.json", ".obsidian/plugins/simple-link/data.json"].some((path) => remoteFiles.includes(path))) {
         throw new Error("远端正在跟踪插件的本机凭据文件 data.json。请先从远端历史中处理它，再继续接入。");
       }
     }
@@ -505,7 +506,7 @@ export class GitSetup {
     if (!missing.length) return;
     const eol = existing.includes("\r\n") ? "\r\n" : "\n";
     const separator = existing ? `${existing.endsWith("\n") ? "" : eol}${eol}` : "";
-    await nodeFs!.writeFile(file, `${existing}${separator}# Simple Sync recommended local exclusions${eol}${missing.join(eol)}${eol}`, "utf8");
+    await nodeFs!.writeFile(file, `${existing}${separator}# Simple Link recommended local exclusions${eol}${missing.join(eol)}${eol}`, "utf8");
   }
 
   private async rebuildTrackingIndex(paths: string[], skipped: ReadonlySet<string>): Promise<void> {
@@ -628,7 +629,7 @@ export class GitSetup {
     try {
       await this.run("git", ["diff", "--cached", "--quiet"]);
     } catch {
-      await this.run("git", ["commit", "-m", "Simple Sync initial vault snapshot"]);
+      await this.run("git", ["commit", "-m", "Simple Link initial vault snapshot"]);
     }
     if (repo.remoteSha) {
       await this.run("git", ["fetch", "origin", repo.branch]);
@@ -661,7 +662,7 @@ export class GitSetup {
           }
           if (rebuildTracking) await this.rebuildTrackingIndex(
             [...new Set([...latest.trackedExcludedLocal, ...latest.trackedExcludedRemote])], skipped);
-          await this.run("git", ["commit", "-m", "Simple Sync connect local and remote notes"]);
+          await this.run("git", ["commit", "-m", "Simple Link connect local and remote notes"]);
         } catch (error) {
           try { await this.run("git", ["merge", "--abort"]); } catch { /* keep Git's diagnostics */ }
           throw error;

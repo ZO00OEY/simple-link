@@ -9,6 +9,7 @@ export interface DirtyEntry {
 export const DEFAULT_SYNC_IGNORE_PATTERNS = [
   ".git/",
   ".simple-sync/",
+  ".simple-link/",
   ".obsidian/cache/",
   ".obsidian/workspace.json",
   ".obsidian/workspaces/",
@@ -24,6 +25,7 @@ export const DEFAULT_SYNC_IGNORE_PATTERNS = [
   ".obsidian/plugins/recent-files-obsidian/data.json",
   ".obsidian/workspace-mobile.json",
   ".obsidian/plugins/simple-sync/data.json",
+  ".obsidian/plugins/simple-link/data.json",
   "node_modules/",
   ".trash/",
   ".claudian/sessions/",
