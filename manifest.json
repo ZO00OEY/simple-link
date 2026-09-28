@@ -1,9 +1,9 @@
 {
   "id": "simple-link",
   "name": "Simple Link",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "minAppVersion": "1.5.0",
-  "description": "Sync an Obsidian vault with Git on desktop or a compatible server on mobile.",
+  "description": "Sync your vault with Git on desktop or a compatible server on mobile.",
   "author": "ZO00OEY",
   "isDesktopOnly": false
 }
