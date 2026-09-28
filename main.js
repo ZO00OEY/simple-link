@@ -1346,7 +1346,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
       if (!import_obsidian3.Platform.isMobile) {
         this.app.workspace.onLayoutReady(() => void this.openSyncView());
       }
-    } else if (this.statusEl) this.statusEl.style.display = "none";
+    } else if (this.statusEl) this.statusEl.hidden = true;
   }
   onunload() {
     this.deactivateFeature();
@@ -1364,7 +1364,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
   activateFeature() {
     if (this.featureActive) return;
     this.featureActive = true;
-    if (this.statusEl) this.statusEl.style.display = "";
+    if (this.statusEl) this.statusEl.hidden = false;
     this.ribbonEl = this.addRibbonIcon("refresh-cw", "\u6253\u5F00 Simple Link", () => void this.openSyncView());
     this.registerViewRefreshEvents();
     if (import_obsidian3.Platform.isMobile) {
@@ -1398,7 +1398,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
     this.clearDesktopTimeouts();
     this.ribbonEl?.remove();
     this.ribbonEl = void 0;
-    if (this.statusEl) this.statusEl.style.display = "none";
+    if (this.statusEl) this.statusEl.hidden = true;
     this.app.workspace.detachLeavesOfType(SimpleSyncView.type);
     this.app.workspace.detachLeavesOfType(SimpleSyncConflictView.type);
   }
@@ -3338,24 +3338,24 @@ var _SimpleSyncView = class _SimpleSyncView extends import_obsidian3.ItemView {
     const control = parent.createDiv({ cls: "simple-sync-view__mode-control" });
     control.setAttr("role", "group");
     control.setAttr("aria-label", "\u9009\u62E9\u6587\u4EF6\u5217\u8868");
-    const createChoice = (value, tooltip, svg) => {
+    const createChoice = (value, tooltip, icon) => {
       const button = control.createEl("button", { cls: "simple-sync-view__mode-choice" });
       button.toggleClass("is-active", value === current);
       button.setAttr("aria-pressed", String(value === current));
       button.setAttr("aria-label", tooltip);
-      button.innerHTML = svg;
+      (0, import_obsidian3.setIcon)(button, icon);
       (0, import_obsidian3.setTooltip)(button, tooltip);
       button.addEventListener("click", () => void this.plugin.setChangeViewMode(value));
     };
     createChoice(
       "commit",
       "\u663E\u793A\u5F85 Commit \u6587\u4EF6",
-      '<svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="m6 9.1 2 2 4.2-4.5"/></svg>'
+      "git-commit"
     );
     createChoice(
       "upload",
       "\u663E\u793A\u5F85\u4E0A\u4F20\u6587\u4EF6",
-      '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M9 12V4"/><path d="m6 7 3-3 3 3"/><path d="M4 13v1.5h10V13"/></svg>'
+      "upload"
     );
   }
   openViewSettingsMenu(event) {
@@ -3472,6 +3472,10 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
     this.refreshingSetupDeviceCode = false;
     this.setupAutoPreviewStarted = false;
   }
+  addHeading(parent, title, cls) {
+    const heading = new import_obsidian3.Setting(parent).setName(title).setHeading();
+    if (cls) heading.settingEl.addClass(cls);
+  }
   display() {
     const { containerEl } = this;
     containerEl.empty();
@@ -3500,7 +3504,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
       this.displaySetup(containerEl);
       return;
     }
-    containerEl.createEl("h2", { text: "Simple Link" });
+    this.addHeading(containerEl, "Simple Link");
     this.addEnableSetting(containerEl);
     if (!import_obsidian3.Platform.isMobile) this.addSetupEntry(containerEl);
     this.displayDesktop(containerEl);
@@ -3520,7 +3524,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
     new import_obsidian3.Setting(parent).setName("\u6D4B\u8BD5\u8FDE\u63A5").setDesc("\u53EA\u9A8C\u8BC1\u5F53\u524D\u670D\u52A1\u5668\u6216 Git/GitHub \u914D\u7F6E\u3002").addButton((button) => button.setButtonText("\u6D4B\u8BD5").onClick(() => void this.plugin.testConnection(true)));
   }
   displayMobile(containerEl) {
-    containerEl.createEl("h3", { text: "\u624B\u673A\u7AEF\u8BBE\u7F6E", cls: "simple-sync-section-title" });
+    this.addHeading(containerEl, "\u624B\u673A\u7AEF\u8BBE\u7F6E", "simple-sync-section-title");
     containerEl.createEl("p", {
       text: "\u79FB\u52A8\u7AEF\u517C\u5BB9\u4ECD\u5728\u5B8C\u5584\uFF0C\u4EE5\u4E0B\u4EC5\u4FDD\u7559\u5F53\u524D\u5DF2\u7ECF\u5B9E\u73B0\u7684\u670D\u52A1\u5668\u540C\u6B65\u8BBE\u7F6E\u3002",
       cls: "simple-sync-section-desc"
@@ -3563,7 +3567,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
   }
   displayDesktop(containerEl) {
     const currentDevice = this.currentDevice();
-    containerEl.createEl("h3", { text: "\u8BBE\u5907\u540C\u6B65", cls: "simple-sync-section-title" });
+    this.addHeading(containerEl, "\u8BBE\u5907\u540C\u6B65", "simple-sync-section-title");
     containerEl.createEl("p", { text: "\u5DF2\u81EA\u52A8\u8BC6\u522B\u5F53\u524D\u8BBE\u5907\uFF1B\u5176\u4ED6\u8BBE\u5907\u7684\u8BBE\u7F6E\u9875\u53EF\u70B9\u5F00\u9884\u89C8\u3002", cls: "simple-sync-section-desc" });
     const entries = [
       { page: "git", title: "\u7535\u8111\u7AEF\u540C\u6B65", desc: "\u4F7F\u7528\u672C\u673A Git \u4E0E GitHub \u4E0B\u8F7D\u3001\u5408\u5E76\u5E76\u4E0A\u4F20\u7B14\u8BB0\u3002", icon: "git-branch" },
@@ -3589,7 +3593,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
   }
   displayDevicePreview(containerEl, title, description, backPage = "root") {
     const header = containerEl.createDiv({ cls: "simple-sync-page-header" });
-    header.createEl("h2", { text: title, cls: "simple-sync-page-title" });
+    this.addHeading(header, title, "simple-sync-page-title");
     const back = header.createEl("button", { cls: "clickable-icon simple-sync-page-back", attr: { type: "button", "aria-label": "\u8FD4\u56DE\u8BBE\u5907\u540C\u6B65" } });
     (0, import_obsidian3.setIcon)(back, "arrow-left");
     back.addEventListener("click", () => {
@@ -3600,7 +3604,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
   }
   displayServerPreview(containerEl) {
     this.displayDevicePreview(containerEl, "\u670D\u52A1\u5668\u7AEF\u540C\u6B65", "Linux \u670D\u52A1\u5668\u7AEF\u7684\u540C\u6B65\u8BBE\u7F6E\u5C06\u5728\u8FD9\u91CC\u8865\u5145\u3002");
-    containerEl.createEl("h3", { text: "\u5F85\u66F4\u65B0", cls: "simple-sync-section-title" });
+    this.addHeading(containerEl, "\u5F85\u66F4\u65B0", "simple-sync-section-title");
     const todo = containerEl.createEl("ul");
     todo.createEl("li", { text: "\u672C\u5730 Git \u5386\u53F2\u7626\u8EAB\uFF1A\u4EC5\u6574\u7406\u670D\u52A1\u5668\u672C\u673A\u7684\u65E7\u5386\u53F2\uFF0C\u4FDD\u7559 GitHub \u4E0A\u7684\u5B8C\u6574\u5386\u53F2\uFF1B\u6267\u884C\u524D\u786E\u8BA4\u672C\u5730\u63D0\u4EA4\u5DF2\u4E0A\u4F20\u3002" });
     todo.createEl("li", { text: "\u6309 .gitignore \u91CD\u5EFA\u8FFD\u8E2A\uFF1A\u8BA9\u5DF2\u8FFD\u8E2A\u3001\u540E\u6765\u88AB\u5FFD\u7565\u7684\u6587\u4EF6\u9000\u51FA Git \u7D22\u5F15\uFF0C\u4FDD\u7559\u670D\u52A1\u5668\u672C\u673A\u6587\u4EF6\uFF1B\u4E0D\u6539\u53D8\u624B\u673A\u7AEF\u7684\u6587\u4EF6\u62C9\u53D6\u8BBE\u7F6E\u3002" });
@@ -3701,7 +3705,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
   }
   displaySetup(containerEl) {
     const header = containerEl.createDiv({ cls: "simple-sync-page-header" });
-    header.createEl("h2", { text: "\u4ECE\u96F6\u5F00\u59CB\u7684 Git \u540C\u6B65\u4F7F\u7528\u6307\u5357\uFF08\u7535\u8111\u7AEF\uFF09", cls: "simple-sync-page-title" });
+    this.addHeading(header, "\u4ECE\u96F6\u5F00\u59CB\u7684 Git \u540C\u6B65\u4F7F\u7528\u6307\u5357\uFF08\u7535\u8111\u7AEF\uFF09", "simple-sync-page-title");
     const back = header.createEl("button", { cls: "clickable-icon simple-sync-page-back", attr: { type: "button", "aria-label": "\u8FD4\u56DE\u8BBE\u7F6E" } });
     (0, import_obsidian3.setIcon)(back, "arrow-left");
     back.addEventListener("click", () => {
@@ -3737,7 +3741,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
       });
     });
     const body = containerEl.createDiv({ cls: "simple-sync-card simple-sync-setup-body" });
-    body.createEl("h3", { text: `${this.setupViewStep}. ${steps[this.setupViewStep - 1]}` });
+    this.addHeading(body, `${this.setupViewStep}. ${steps[this.setupViewStep - 1]}`);
     if (this.setupViewStep === 1) this.displaySetupIntro(body);
     if (this.setupViewStep === 2) this.displaySetupGit(body);
     if (this.setupViewStep === 3) this.displaySetupAuth(body);
@@ -3913,7 +3917,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
       this.display();
     });
     if (this.setupRepoMode === "existing") {
-      body.createEl("h4", { text: "\u6838\u9A8C\u5DF2\u6709\u4ED3\u5E93" });
+      this.addHeading(body, "\u6838\u9A8C\u5DF2\u6709\u4ED3\u5E93");
       body.createEl("p", { text: "\u586B\u5199\u4ED3\u5E93 HTTPS \u5730\u5740\uFF0C\u70B9\u51FB\u8F93\u5165\u6846\u53F3\u4FA7\u7684 \u2713 \u540E\u81EA\u52A8\u68C0\u67E5\u79C1\u4EBA\u5C5E\u6027\u548C\u5F53\u524D\u8D26\u53F7\u7684\u5199\u5165\u6743\u9650\u3002" });
       let verifyButton;
       const row = new import_obsidian3.Setting(body).setName("GitHub \u4ED3\u5E93\u5730\u5740").addText((text) => {
@@ -3936,7 +3940,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
       }
       body.createEl("p", { text: "\u652F\u6301 HTTPS \u5730\u5740\u3002\u4ED3\u5E93\u540D\u4E0D\u80FD\u5305\u542B\u7A7A\u683C\u6216 \u2713\uFF1B\u6709\u6548\u89C4\u5219\uFF1A\u6700\u591A 100 \u4E2A\u5B57\u7B26\uFF0C\u9650\u82F1\u6587\u5B57\u6BCD\u3001\u6570\u5B57\u3001\u70B9\u3001\u8FDE\u5B57\u7B26\u548C\u4E0B\u5212\u7EBF\u3002", cls: "simple-sync-section-desc" });
     } else {
-      body.createEl("h4", { text: "\u65B0\u5EFA\u79C1\u4EBA\u4ED3\u5E93" });
+      this.addHeading(body, "\u65B0\u5EFA\u79C1\u4EBA\u4ED3\u5E93");
       body.createEl("p", { text: "\u586B\u5199\u540D\u79F0\u5E76\u70B9\u51FB\u53F3\u4FA7 \u2713\uFF0C\u63D2\u4EF6\u4F1A\u5728\u5F53\u524D\u6388\u6743\u7684 GitHub \u8D26\u53F7\u4E0B\u521B\u5EFA Private \u4ED3\u5E93\uFF0C\u7136\u540E\u81EA\u52A8\u6838\u9A8C\u3002" });
       if (this.plugin.settings.gitAuthMode === "token") {
         body.createEl("p", { text: "\u4F7F\u7528 Token \u521B\u5EFA\u4ED3\u5E93\u9700\u8981 fine-grained Token \u7684 Administration \u4ED3\u5E93\u6743\u9650\uFF08write\uFF09\u3002", cls: "simple-sync-section-desc" });
@@ -4026,7 +4030,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
           }, `\u5DF2\u8BFB\u53D6 ${path} \u7684\u4E24\u7AEF\u5185\u5BB9\u3002`)));
         }
         if (this.setupOverlapContent && preview.overlaps.includes(this.setupOverlapContent.path)) {
-          body.createEl("h4", { text: `\u5185\u5BB9\u5BF9\u7167\uFF1A${this.setupOverlapContent.path}` });
+          this.addHeading(body, `\u5185\u5BB9\u5BF9\u7167\uFF1A${this.setupOverlapContent.path}`);
           const comparison = body.createDiv({ cls: "simple-sync-setup-comparison" });
           const local = comparison.createDiv();
           local.createEl("strong", { text: "\u672C\u673A" });
@@ -4087,7 +4091,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
   displayDesktopGit(containerEl) {
     const preview = this.currentDevice() !== "git";
     const pageHeader = containerEl.createDiv({ cls: "simple-sync-page-header" });
-    pageHeader.createEl("h2", { text: "\u7535\u8111\u7AEF\u540C\u6B65", cls: "simple-sync-page-title" });
+    this.addHeading(pageHeader, "\u7535\u8111\u7AEF\u540C\u6B65", "simple-sync-page-title");
     const backButton = pageHeader.createEl("button", {
       cls: "clickable-icon simple-sync-page-back",
       attr: { type: "button", "aria-label": "\u8FD4\u56DE\u8BBE\u5907\u540C\u6B65" }
@@ -4103,11 +4107,11 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
     });
     if (preview) containerEl.createEl("p", { text: "\u5F53\u524D\u8BBE\u5907\u4EC5\u9884\u89C8\u548C\u7F16\u8F91\u7535\u8111\u7AEF\u8BBE\u7F6E\uFF1B\u540C\u6B65\u4E0E\u6545\u969C\u4FEE\u590D\u8BF7\u5728\u7535\u8111\u7AEF\u6267\u884C\u3002", cls: "simple-sync-section-desc" });
     if (!preview) {
-      containerEl.createEl("h3", { text: "\u540C\u6B65\u64CD\u4F5C", cls: "simple-sync-section-title" });
+      this.addHeading(containerEl, "\u540C\u6B65\u64CD\u4F5C", "simple-sync-section-title");
       const syncCard = containerEl.createDiv({ cls: "simple-sync-card" });
       this.addSyncSetting(syncCard);
     }
-    containerEl.createEl("h3", { text: "\u8FDE\u63A5", cls: "simple-sync-section-title" });
+    this.addHeading(containerEl, "\u8FDE\u63A5", "simple-sync-section-title");
     const connectionCard = containerEl.createDiv({ cls: "simple-sync-card" });
     new import_obsidian3.Setting(connectionCard).setName("Git \u4ED3\u5E93\u5730\u5740").setDesc("\u586B\u5199\u7528\u4E8E\u4FDD\u5B58\u548C\u540C\u6B65\u7B14\u8BB0\u7684 GitHub \u4ED3\u5E93\u5730\u5740\u3002").addText(
       (text) => text.setPlaceholder("https://github.com/user/vault.git").setValue(this.plugin.settings.gitRemoteUrl).onChange(async (value) => {
@@ -4140,15 +4144,15 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
     summary.createSpan({ text: "\u9AD8\u7EA7\u8BBE\u7F6E", cls: "simple-sync-advanced__title" });
     summary.createSpan({ text: "\u901A\u5E38\u4E0D\u9700\u8981\u4FEE\u6539", cls: "simple-sync-advanced__desc" });
     const advancedBody = advanced.createDiv({ cls: "simple-sync-card simple-sync-advanced__body" });
-    advancedBody.createEl("h4", { text: "\u754C\u9762\u8BBE\u7F6E", cls: "simple-sync-subsection-title" });
+    this.addHeading(advancedBody, "\u754C\u9762\u8BBE\u7F6E", "simple-sync-subsection-title");
     const versionViewSetting = new import_obsidian3.Setting(advancedBody).setName("\u663E\u793A\u5F85 Commit \u5217\u8868").setDesc("\u5728\u540C\u6B65\u6309\u94AE\u65C1\u663E\u793A\u5F85\u4E0A\u4F20\u548C\u5F85 Commit \u5207\u6362\u3002\u5173\u95ED\u65F6\u53EA\u663E\u793A\u5F85\u4E0A\u4F20\u6587\u4EF6\u3002");
     const versionViewIcon = versionViewSetting.nameEl.createSpan({ cls: "simple-sync-setting-mode-icon" });
-    versionViewIcon.innerHTML = '<svg viewBox="0 0 32 18" aria-hidden="true"><g><circle cx="7.5" cy="9" r="5.25"/><path d="m4.9 9.1 1.7 1.7 3.5-3.8"/></g><path class="mode-divider" d="M16 3.25v11.5"/><g><path d="M23.75 11.75v-7.5"/><path d="m20.75 7.25 3-3 3 3"/><path d="M19.25 12.75v1.5h9v-1.5"/></g></svg>';
+    (0, import_obsidian3.setIcon)(versionViewIcon, "git-commit");
     versionViewSetting.nameEl.prepend(versionViewIcon);
     versionViewSetting.addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.showVersionViewSwitcher).onChange((value) => void this.plugin.setVersionViewSwitcher(value))
     );
-    advancedBody.createEl("h4", { text: "\u540C\u6B65\u65F6\u95F4\u8BBE\u7F6E", cls: "simple-sync-subsection-title" });
+    this.addHeading(advancedBody, "\u540C\u6B65\u65F6\u95F4\u8BBE\u7F6E", "simple-sync-subsection-title");
     new import_obsidian3.Setting(advancedBody).setName("\u7A7A\u95F2\u540E\u6C47\u603B\u53D8\u5316\u6587\u4EF6\u5217\u8868\uFF08\u79D2\uFF09").setDesc("\u6301\u7EED\u591A\u4E45\u6CA1\u6709\u6587\u4EF6\u53D8\u5316\u540E\u6C47\u603B\u6240\u6709\u53D8\u5316\u6587\u4EF6\uFF0C\u751F\u6210\u5F85 Commit\uFF0F\u4E0A\u4F20\u5217\u8868\u3002").addText((text) => {
       text.inputEl.type = "number";
       text.inputEl.min = "0.5";
@@ -4169,7 +4173,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
       })
     );
     new import_obsidian3.Setting(advancedBody).setName("\u81EA\u52A8 Fetch \u4E0E Merge \u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u6309\u6B64\u65F6\u95F4\u95F4\u9694\u83B7\u53D6\u4E91\u7AEF\u6700\u65B0\u63D0\u4EA4\u5E76\u5408\u5E76\u5230\u672C\u673A\uFF1B\u4E0D\u4F1A\u6267\u884C Push\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "autoPullIntervalMinutes", 5));
-    advancedBody.createEl("h4", { text: "Git \u8BBE\u7F6E", cls: "simple-sync-subsection-title" });
+    this.addHeading(advancedBody, "Git \u8BBE\u7F6E", "simple-sync-subsection-title");
     new import_obsidian3.Setting(advancedBody).setName("\u5206\u652F").setDesc("\u9ED8\u8BA4\u4F7F\u7528 master\uFF1B\u53EA\u6709\u4ED3\u5E93\u4F7F\u7528\u5176\u4ED6\u5206\u652F\u65F6\u624D\u9700\u8981\u4FEE\u6539\u3002").addText(
       (text) => text.setValue(this.plugin.settings.gitBranch).onChange(async (value) => {
         this.plugin.settings.gitBranch = value.trim() || "master";
@@ -4188,7 +4192,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    advancedBody.createEl("h4", { text: "\u6545\u969C\u6392\u67E5", cls: "simple-sync-subsection-title" });
+    this.addHeading(advancedBody, "\u6545\u969C\u6392\u67E5", "simple-sync-subsection-title");
     new import_obsidian3.Setting(advancedBody).setName("\u5F02\u5E38\u4FEE\u590D").setDesc("\u6062\u590D\u672A\u5B8C\u6210\u7684 Rebase\u3001Merge \u7B49 Git \u64CD\u4F5C\uFF0C\u4EE5\u5F53\u524D\u672C\u673A\u5185\u5BB9\u91CD\u65B0 Commit\uFF0C\u518D Fetch \u5E76 Merge\uFF1B\u4E0D\u4F1A\u7ACB\u5373 Push\u3002").addButton(
       (button) => button.setButtonText("\u6062\u590D\u6B63\u5E38\u540C\u6B65").setDisabled(preview).onClick(async () => {
         button.setDisabled(true);

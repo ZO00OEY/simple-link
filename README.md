@@ -15,7 +15,7 @@
 
 - **Desktop:** Git installed on the computer. GitHub CLI is optional; you can also provide a GitHub token. The setup wizard currently verifies GitHub repositories.
 - **Mobile:** a separately hosted server that implements the Simple Link API v1. The server is not included in this repository. Use HTTPS for public servers; HTTP is accepted only for localhost.
-- **Obsidian:** version 1.5.0 or newer.
+- **Obsidian:** version 1.7.2 or newer.
 
 ## Install
 
@@ -62,7 +62,7 @@ Simple Link 用于在多台设备间同步 Obsidian Vault：电脑端通过 Git 
 
 - **电脑端：**需要在电脑上安装 Git。GitHub CLI 是可选项，也可以填写 GitHub Token。当前接入向导会核验 GitHub 仓库。
 - **手机端：**需要自行部署兼容 Simple Link API v1 的服务器。本仓库不包含服务器程序。公网服务器须使用 HTTPS；仅 localhost 可使用 HTTP。
-- **Obsidian：**版本 1.5.0 或更高。
+- **Obsidian：**版本 1.7.2 或更高。
 
 ### 安装
 

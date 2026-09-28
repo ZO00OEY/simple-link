@@ -313,7 +313,7 @@ export default class SimpleSyncPlugin extends Plugin {
       if (!Platform.isMobile) {
         this.app.workspace.onLayoutReady(() => void this.openSyncView());
       }
-    } else if (this.statusEl) this.statusEl.style.display = "none";
+    } else if (this.statusEl) this.statusEl.hidden = true;
   }
 
   onunload(): void {
@@ -334,7 +334,7 @@ export default class SimpleSyncPlugin extends Plugin {
   private activateFeature(): void {
     if (this.featureActive) return;
     this.featureActive = true;
-    if (this.statusEl) this.statusEl.style.display = "";
+    if (this.statusEl) this.statusEl.hidden = false;
     this.ribbonEl = this.addRibbonIcon("refresh-cw", "打开 Simple Link", () => void this.openSyncView());
     this.registerViewRefreshEvents();
     if (Platform.isMobile) {
@@ -369,7 +369,7 @@ export default class SimpleSyncPlugin extends Plugin {
     this.clearDesktopTimeouts();
     this.ribbonEl?.remove();
     this.ribbonEl = undefined;
-    if (this.statusEl) this.statusEl.style.display = "none";
+    if (this.statusEl) this.statusEl.hidden = true;
     this.app.workspace.detachLeavesOfType(SimpleSyncView.type);
     this.app.workspace.detachLeavesOfType(SimpleSyncConflictView.type);
   }
@@ -2542,24 +2542,24 @@ class SimpleSyncView extends ItemView {
     const control = parent.createDiv({ cls: "simple-sync-view__mode-control" });
     control.setAttr("role", "group");
     control.setAttr("aria-label", "选择文件列表");
-    const createChoice = (value: ChangeViewMode, tooltip: string, svg: string): void => {
+    const createChoice = (value: ChangeViewMode, tooltip: string, icon: string): void => {
       const button = control.createEl("button", { cls: "simple-sync-view__mode-choice" });
       button.toggleClass("is-active", value === current);
       button.setAttr("aria-pressed", String(value === current));
       button.setAttr("aria-label", tooltip);
-      button.innerHTML = svg;
+      setIcon(button, icon);
       setTooltip(button, tooltip);
       button.addEventListener("click", () => void this.plugin.setChangeViewMode(value));
     };
     createChoice(
       "commit",
       "显示待 Commit 文件",
-      '<svg viewBox="0 0 18 18" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="m6 9.1 2 2 4.2-4.5"/></svg>'
+      "git-commit"
     );
     createChoice(
       "upload",
       "显示待上传文件",
-      '<svg viewBox="0 0 18 18" aria-hidden="true"><path d="M9 12V4"/><path d="m6 7 3-3 3 3"/><path d="M4 13v1.5h10V13"/></svg>'
+      "upload"
     );
   }
 
@@ -2709,6 +2709,11 @@ class SimpleSyncSettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
+  private addHeading(parent: HTMLElement, title: string, cls?: string): void {
+    const heading = new Setting(parent).setName(title).setHeading();
+    if (cls) heading.settingEl.addClass(cls);
+  }
+
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
@@ -2721,7 +2726,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
     if (this.desktopPage === "ios-guide") { this.displayDevicePreview(containerEl, "从零开始的 Git 同步使用指南（iOS）", "iOS 端的接入步骤将在轻量版 Git 同步功能完成后补充。", "mobile"); return; }
     if (!Platform.isMobile && this.desktopPage === "setup") { this.displaySetup(containerEl); return; }
 
-    containerEl.createEl("h2", { text: "Simple Link" });
+    this.addHeading(containerEl, "Simple Link");
     this.addEnableSetting(containerEl);
     if (!Platform.isMobile) this.addSetupEntry(containerEl);
 
@@ -2755,7 +2760,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
   }
 
   private displayMobile(containerEl: HTMLElement): void {
-    containerEl.createEl("h3", { text: "手机端设置", cls: "simple-sync-section-title" });
+    this.addHeading(containerEl, "手机端设置", "simple-sync-section-title");
     containerEl.createEl("p", {
       text: "移动端兼容仍在完善，以下仅保留当前已经实现的服务器同步设置。",
       cls: "simple-sync-section-desc"
@@ -2809,7 +2814,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
 
   private displayDesktop(containerEl: HTMLElement): void {
     const currentDevice = this.currentDevice();
-    containerEl.createEl("h3", { text: "设备同步", cls: "simple-sync-section-title" });
+    this.addHeading(containerEl, "设备同步", "simple-sync-section-title");
     containerEl.createEl("p", { text: "已自动识别当前设备；其他设备的设置页可点开预览。", cls: "simple-sync-section-desc" });
     const entries = [
       { page: "git", title: "电脑端同步", desc: "使用本机 Git 与 GitHub 下载、合并并上传笔记。", icon: "git-branch" },
@@ -2833,7 +2838,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
 
   private displayDevicePreview(containerEl: HTMLElement, title: string, description: string, backPage: "root" | "mobile" = "root"): void {
     const header = containerEl.createDiv({ cls: "simple-sync-page-header" });
-    header.createEl("h2", { text: title, cls: "simple-sync-page-title" });
+    this.addHeading(header, title, "simple-sync-page-title");
     const back = header.createEl("button", { cls: "clickable-icon simple-sync-page-back", attr: { type: "button", "aria-label": "返回设备同步" } });
     setIcon(back, "arrow-left");
     back.addEventListener("click", () => { this.desktopPage = backPage; this.display(); });
@@ -2842,7 +2847,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
 
   private displayServerPreview(containerEl: HTMLElement): void {
     this.displayDevicePreview(containerEl, "服务器端同步", "Linux 服务器端的同步设置将在这里补充。");
-    containerEl.createEl("h3", { text: "待更新", cls: "simple-sync-section-title" });
+    this.addHeading(containerEl, "待更新", "simple-sync-section-title");
     const todo = containerEl.createEl("ul");
     todo.createEl("li", { text: "本地 Git 历史瘦身：仅整理服务器本机的旧历史，保留 GitHub 上的完整历史；执行前确认本地提交已上传。" });
     todo.createEl("li", { text: "按 .gitignore 重建追踪：让已追踪、后来被忽略的文件退出 Git 索引，保留服务器本机文件；不改变手机端的文件拉取设置。" });
@@ -2945,7 +2950,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
 
   private displaySetup(containerEl: HTMLElement): void {
     const header = containerEl.createDiv({ cls: "simple-sync-page-header" });
-    header.createEl("h2", { text: "从零开始的 Git 同步使用指南（电脑端）", cls: "simple-sync-page-title" });
+    this.addHeading(header, "从零开始的 Git 同步使用指南（电脑端）", "simple-sync-page-title");
     const back = header.createEl("button", { cls: "clickable-icon simple-sync-page-back", attr: { type: "button", "aria-label": "返回设置" } });
     setIcon(back, "arrow-left");
     back.addEventListener("click", () => { this.desktopPage = "root"; this.display(); });
@@ -2980,7 +2985,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
       });
     });
     const body = containerEl.createDiv({ cls: "simple-sync-card simple-sync-setup-body" });
-    body.createEl("h3", { text: `${this.setupViewStep}. ${steps[this.setupViewStep - 1]}` });
+    this.addHeading(body, `${this.setupViewStep}. ${steps[this.setupViewStep - 1]}`);
     if (this.setupViewStep === 1) this.displaySetupIntro(body);
     if (this.setupViewStep === 2) this.displaySetupGit(body);
     if (this.setupViewStep === 3) this.displaySetupAuth(body);
@@ -3149,7 +3154,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
     create.addEventListener("click", () => { this.setupRepoMode = "create"; this.setupMessage = ""; this.display(); });
 
     if (this.setupRepoMode === "existing") {
-      body.createEl("h4", { text: "核验已有仓库" });
+      this.addHeading(body, "核验已有仓库");
       body.createEl("p", { text: "填写仓库 HTTPS 地址，点击输入框右侧的 ✓ 后自动检查私人属性和当前账号的写入权限。" });
       let verifyButton: HTMLButtonElement | undefined;
       const row = new Setting(body).setName("GitHub 仓库地址")
@@ -3175,7 +3180,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
       }
       body.createEl("p", { text: "支持 HTTPS 地址。仓库名不能包含空格或 ✓；有效规则：最多 100 个字符，限英文字母、数字、点、连字符和下划线。", cls: "simple-sync-section-desc" });
     } else {
-      body.createEl("h4", { text: "新建私人仓库" });
+      this.addHeading(body, "新建私人仓库");
       body.createEl("p", { text: "填写名称并点击右侧 ✓，插件会在当前授权的 GitHub 账号下创建 Private 仓库，然后自动核验。" });
       if (this.plugin.settings.gitAuthMode === "token") {
         body.createEl("p", { text: "使用 Token 创建仓库需要 fine-grained Token 的 Administration 仓库权限（write）。" , cls: "simple-sync-section-desc" });
@@ -3283,7 +3288,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
             }, `已读取 ${path} 的两端内容。`)));
         }
         if (this.setupOverlapContent && preview.overlaps.includes(this.setupOverlapContent.path)) {
-          body.createEl("h4", { text: `内容对照：${this.setupOverlapContent.path}` });
+          this.addHeading(body, `内容对照：${this.setupOverlapContent.path}`);
           const comparison = body.createDiv({ cls: "simple-sync-setup-comparison" });
           const local = comparison.createDiv();
           local.createEl("strong", { text: "本机" });
@@ -3369,7 +3374,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
   private displayDesktopGit(containerEl: HTMLElement): void {
     const preview = this.currentDevice() !== "git";
     const pageHeader = containerEl.createDiv({ cls: "simple-sync-page-header" });
-    pageHeader.createEl("h2", { text: "电脑端同步", cls: "simple-sync-page-title" });
+    this.addHeading(pageHeader, "电脑端同步", "simple-sync-page-title");
     const backButton = pageHeader.createEl("button", {
       cls: "clickable-icon simple-sync-page-back",
       attr: { type: "button", "aria-label": "返回设备同步" }
@@ -3387,12 +3392,12 @@ class SimpleSyncSettingTab extends PluginSettingTab {
     if (preview) containerEl.createEl("p", { text: "当前设备仅预览和编辑电脑端设置；同步与故障修复请在电脑端执行。", cls: "simple-sync-section-desc" });
 
     if (!preview) {
-      containerEl.createEl("h3", { text: "同步操作", cls: "simple-sync-section-title" });
+      this.addHeading(containerEl, "同步操作", "simple-sync-section-title");
       const syncCard = containerEl.createDiv({ cls: "simple-sync-card" });
       this.addSyncSetting(syncCard);
     }
 
-    containerEl.createEl("h3", { text: "连接", cls: "simple-sync-section-title" });
+    this.addHeading(containerEl, "连接", "simple-sync-section-title");
     const connectionCard = containerEl.createDiv({ cls: "simple-sync-card" });
     new Setting(connectionCard)
       .setName("Git 仓库地址")
@@ -3441,13 +3446,12 @@ class SimpleSyncSettingTab extends PluginSettingTab {
     summary.createSpan({ text: "高级设置", cls: "simple-sync-advanced__title" });
     summary.createSpan({ text: "通常不需要修改", cls: "simple-sync-advanced__desc" });
     const advancedBody = advanced.createDiv({ cls: "simple-sync-card simple-sync-advanced__body" });
-    advancedBody.createEl("h4", { text: "界面设置", cls: "simple-sync-subsection-title" });
+    this.addHeading(advancedBody, "界面设置", "simple-sync-subsection-title");
     const versionViewSetting = new Setting(advancedBody)
       .setName("显示待 Commit 列表")
       .setDesc("在同步按钮旁显示待上传和待 Commit 切换。关闭时只显示待上传文件。");
     const versionViewIcon = versionViewSetting.nameEl.createSpan({ cls: "simple-sync-setting-mode-icon" });
-    versionViewIcon.innerHTML =
-      '<svg viewBox="0 0 32 18" aria-hidden="true"><g><circle cx="7.5" cy="9" r="5.25"/><path d="m4.9 9.1 1.7 1.7 3.5-3.8"/></g><path class="mode-divider" d="M16 3.25v11.5"/><g><path d="M23.75 11.75v-7.5"/><path d="m20.75 7.25 3-3 3 3"/><path d="M19.25 12.75v1.5h9v-1.5"/></g></svg>';
+    setIcon(versionViewIcon, "git-commit");
     versionViewSetting.nameEl.prepend(versionViewIcon);
     versionViewSetting.addToggle((toggle) =>
       toggle
@@ -3455,7 +3459,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
         .onChange((value) => void this.plugin.setVersionViewSwitcher(value))
     );
 
-    advancedBody.createEl("h4", { text: "同步时间设置", cls: "simple-sync-subsection-title" });
+    this.addHeading(advancedBody, "同步时间设置", "simple-sync-subsection-title");
     new Setting(advancedBody)
       .setName("空闲后汇总变化文件列表（秒）")
       .setDesc("持续多久没有文件变化后汇总所有变化文件，生成待 Commit／上传列表。")
@@ -3498,7 +3502,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
       .setDesc("按此时间间隔获取云端最新提交并合并到本机；不会执行 Push。设为 0 可关闭。")
       .addText((text) => this.addTimingInput(text, "autoPullIntervalMinutes", 5));
 
-    advancedBody.createEl("h4", { text: "Git 设置", cls: "simple-sync-subsection-title" });
+    this.addHeading(advancedBody, "Git 设置", "simple-sync-subsection-title");
     new Setting(advancedBody)
       .setName("分支")
       .setDesc("默认使用 master；只有仓库使用其他分支时才需要修改。")
@@ -3527,7 +3531,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
         })
       );
 
-    advancedBody.createEl("h4", { text: "故障排查", cls: "simple-sync-subsection-title" });
+    this.addHeading(advancedBody, "故障排查", "simple-sync-subsection-title");
     new Setting(advancedBody)
       .setName("异常修复")
       .setDesc("恢复未完成的 Rebase、Merge 等 Git 操作，以当前本机内容重新 Commit，再 Fetch 并 Merge；不会立即 Push。")
