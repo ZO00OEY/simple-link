@@ -1,9 +1,9 @@
 {
   "id": "simple-link",
   "name": "Simple Link",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "minAppVersion": "1.7.2",
-  "description": "Sync your vault with Git on desktop or a compatible server on mobile.",
+  "description": "跨设备同步插件：移动端连接服务器，桌面端连接 Git/GitHub。",
   "author": "ZO.oEY",
   "isDesktopOnly": false
 }

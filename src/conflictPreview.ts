@@ -53,7 +53,7 @@ const SAMPLE_FILES: PreviewFile[] = [
   { path: "示例/旅行清单.md", totalLines: 82, localUpdatedAt: "2026-09-26T22:02:00+08:00", remoteUpdatedAt: "2026-09-27T00:25:00+08:00", blocks: [{ line: 63, local: "- 带充电器和雨伞", remote: "- 带充电器、雨伞和备用眼镜" }] }
 ];
 
-export class SimpleSyncConflictPreviewModal extends Modal {
+export class ZoeySyncConflictPreviewModal extends Modal {
   private pending = new Set(SAMPLE_FILES.map((file) => file.path));
   private expandedPath?: string;
   private fileChoices = new Map<string, FileChoice>();
@@ -65,7 +65,7 @@ export class SimpleSyncConflictPreviewModal extends Modal {
   }
 
   onOpen(): void {
-    this.modalEl.addClass("simple-sync-preview-modal");
+    this.modalEl.addClass("zoey-sync-preview-modal");
     this.render(false);
   }
 
@@ -77,26 +77,26 @@ export class SimpleSyncConflictPreviewModal extends Modal {
     const root = this.contentEl;
     const scrollTop = preserveScroll ? root.scrollTop : 0;
     root.empty();
-    root.addClass("simple-sync-preview");
+    root.addClass("zoey-sync-preview");
 
-    const header = root.createDiv({ cls: "simple-sync-preview__header" });
+    const header = root.createDiv({ cls: "zoey-sync-preview__header" });
     const heading = header.createDiv();
-    heading.createDiv({ text: "界面预览 · 示例数据", cls: "simple-sync-preview__eyebrow" });
+    heading.createDiv({ text: "界面预览 · 示例数据", cls: "zoey-sync-preview__eyebrow" });
     heading.createEl("h2", { text: "处理文件差异" });
     const reset = header.createEl("button", { text: "重置示例" });
     reset.addEventListener("click", () => this.reset());
 
     root.createDiv({
       text: "仅演示界面和选择方式，不会修改笔记或执行同步。",
-      cls: "simple-sync-preview__notice"
+      cls: "zoey-sync-preview__notice"
     });
 
-    const toolbar = root.createDiv({ cls: "simple-sync-preview__toolbar" });
-    toolbar.createSpan({ text: `待处理 ${this.pending.size} 个文件`, cls: "simple-sync-preview__count" });
-    const bulk = toolbar.createDiv({ cls: "simple-sync-preview__bulk" });
-    this.createButton(bulk, "全选最新", () => this.selectAll("latest"), "simple-sync-preview__bulk-choice");
-    this.createButton(bulk, "全部选本机", () => this.selectAll("local"), "simple-sync-preview__bulk-choice is-local");
-    this.createButton(bulk, "全部选 GitHub", () => this.selectAll("remote"), "simple-sync-preview__bulk-choice is-remote");
+    const toolbar = root.createDiv({ cls: "zoey-sync-preview__toolbar" });
+    toolbar.createSpan({ text: `待处理 ${this.pending.size} 个文件`, cls: "zoey-sync-preview__count" });
+    const bulk = toolbar.createDiv({ cls: "zoey-sync-preview__bulk" });
+    this.createButton(bulk, "全选最新", () => this.selectAll("latest"), "zoey-sync-preview__bulk-choice");
+    this.createButton(bulk, "全部选本机", () => this.selectAll("local"), "zoey-sync-preview__bulk-choice is-local");
+    this.createButton(bulk, "全部选 GitHub", () => this.selectAll("remote"), "zoey-sync-preview__bulk-choice is-remote");
     this.createButton(bulk, "清空选择", () => {
       this.fileChoices.clear();
       this.blockChoices.clear();
@@ -104,17 +104,17 @@ export class SimpleSyncConflictPreviewModal extends Modal {
     });
 
     if (this.appliedCount > 0) {
-      root.createDiv({ text: `示例中已应用 ${this.appliedCount} 个，剩余 ${this.pending.size} 个待处理。`, cls: "simple-sync-preview__feedback" });
+      root.createDiv({ text: `示例中已应用 ${this.appliedCount} 个，剩余 ${this.pending.size} 个待处理。`, cls: "zoey-sync-preview__feedback" });
     }
 
-    const list = root.createDiv({ cls: "simple-sync-preview__list" });
+    const list = root.createDiv({ cls: "zoey-sync-preview__list" });
     for (const file of SAMPLE_FILES) {
       if (this.pending.has(file.path)) this.renderFile(list, file);
     }
-    if (this.pending.size === 0) list.createDiv({ text: "示例文件已全部处理。可以点“重置示例”重新查看。", cls: "simple-sync-preview__empty" });
+    if (this.pending.size === 0) list.createDiv({ text: "示例文件已全部处理。可以点“重置示例”重新查看。", cls: "zoey-sync-preview__empty" });
 
     const ready = this.getReadyFiles();
-    const footer = root.createDiv({ cls: "simple-sync-preview__footer" });
+    const footer = root.createDiv({ cls: "zoey-sync-preview__footer" });
     footer.createSpan({ text: `已选好 ${ready.length} 个 · 待处理 ${this.pending.size} 个` });
     const apply = footer.createEl("button", { text: `应用选择${ready.length > 0 ? ` (${ready.length})` : ""}`, cls: "mod-cta" });
     apply.disabled = ready.length === 0;
@@ -124,45 +124,45 @@ export class SimpleSyncConflictPreviewModal extends Modal {
 
   private renderFile(list: HTMLElement, file: PreviewFile): void {
     const expanded = this.expandedPath === file.path;
-    const row = list.createDiv({ cls: "simple-sync-preview__file" });
+    const row = list.createDiv({ cls: "zoey-sync-preview__file" });
     row.toggleClass("is-expanded", expanded);
-    const summary = row.createDiv({ cls: "simple-sync-preview__summary" });
-    const toggle = summary.createEl("button", { cls: "simple-sync-preview__toggle" });
+    const summary = row.createDiv({ cls: "zoey-sync-preview__summary" });
+    const toggle = summary.createEl("button", { cls: "zoey-sync-preview__toggle" });
     toggle.setAttr("aria-expanded", String(expanded));
     toggle.setAttr("aria-label", `${expanded ? "收起" : "展开"}${file.path}`);
-    setIcon(toggle.createSpan({ cls: "simple-sync-preview__chevron" }), "chevron-right");
-    const name = toggle.createSpan({ cls: "simple-sync-preview__name" });
-    name.createSpan({ text: file.path, cls: "simple-sync-preview__path" });
-    name.createSpan({ text: `${file.blocks.length} 处差异`, cls: "simple-sync-preview__meta" });
+    setIcon(toggle.createSpan({ cls: "zoey-sync-preview__chevron" }), "chevron-right");
+    const name = toggle.createSpan({ cls: "zoey-sync-preview__name" });
+    name.createSpan({ text: file.path, cls: "zoey-sync-preview__path" });
+    name.createSpan({ text: `${file.blocks.length} 处差异`, cls: "zoey-sync-preview__meta" });
     const toggleFile = () => {
       this.expandedPath = expanded ? undefined : file.path;
       this.render();
     };
     summary.addEventListener("click", (event) => {
-      if (event.target instanceof Element && event.target.closest(".simple-sync-preview__choice-control")) return;
+      if (event.target instanceof Element && event.target.closest(".zoey-sync-preview__choice-control")) return;
       toggleFile();
     });
 
-    const times = summary.createEl("button", { cls: "simple-sync-preview__times" });
+    const times = summary.createEl("button", { cls: "zoey-sync-preview__times" });
     times.setAttr("aria-expanded", String(expanded));
     times.setAttr("aria-label", `${expanded ? "收起" : "展开"}${file.path}，本机与 GitHub 更新时间`);
     for (const [side, text, value] of [["local", "本机", file.localUpdatedAt], ["remote", "GitHub", file.remoteUpdatedAt]] as const) {
-      const line = times.createSpan({ cls: "simple-sync-preview__time" });
+      const line = times.createSpan({ cls: "zoey-sync-preview__time" });
       line.toggleClass("is-newer", this.latestSide(file) === side);
       line.createSpan({ text: `${text}更新` });
       const time = line.createEl("time", { text: this.formatTime(value) });
       time.setAttr("datetime", value);
     }
     const selected = this.fileChoices.get(file.path);
-    const control = summary.createDiv({ cls: "simple-sync-preview__choice-control" });
-    const selection = control.createEl("button", { text: this.fileStatus(file), cls: "simple-sync-preview__selection" });
-    setIcon(selection.createSpan({ cls: "simple-sync-preview__selection-icon" }), "chevron-down");
+    const control = summary.createDiv({ cls: "zoey-sync-preview__choice-control" });
+    const selection = control.createEl("button", { text: this.fileStatus(file), cls: "zoey-sync-preview__selection" });
+    setIcon(selection.createSpan({ cls: "zoey-sync-preview__selection-icon" }), "chevron-down");
     const tone = this.selectionTone(file);
     if (tone) selection.addClass(`is-${tone}`);
     selection.setAttr("aria-label", `${file.path}当前${this.fileStatus(file)}，点击选择最新、本机或 GitHub`);
-    const segments = control.createDiv({ cls: "simple-sync-preview__segments" });
+    const segments = control.createDiv({ cls: "zoey-sync-preview__segments" });
     for (const [choice, label] of [["latest", "最新"], ["local", "本机"], ["remote", "GitHub"]] as const) {
-      const option = segments.createEl("button", { text: label, cls: `simple-sync-preview__segment is-${choice === "latest" ? this.latestSide(file) : choice}` });
+      const option = segments.createEl("button", { text: label, cls: `zoey-sync-preview__segment is-${choice === "latest" ? this.latestSide(file) : choice}` });
       option.toggleClass("is-selected", selected === choice);
       option.setAttr("aria-label", `${file.path}选择${label}`);
       option.setAttr("aria-pressed", String(selected === choice));
@@ -175,29 +175,29 @@ export class SimpleSyncConflictPreviewModal extends Modal {
   }
 
   private renderBlocks(row: HTMLElement, file: PreviewFile): void {
-    const details = row.createDiv({ cls: "simple-sync-preview__details" });
+    const details = row.createDiv({ cls: "zoey-sync-preview__details" });
     details.toggleClass("is-mixed", this.selectionTone(file) === "mixed");
-    const headings = details.createDiv({ cls: "simple-sync-preview__block-headers" });
-    headings.createSpan({ text: "差异", cls: "simple-sync-preview__block-heading" });
-    headings.createSpan({ text: "本机区块", cls: "simple-sync-preview__block-heading" });
-    headings.createSpan({ text: "Git 区块", cls: "simple-sync-preview__block-heading" });
+    const headings = details.createDiv({ cls: "zoey-sync-preview__block-headers" });
+    headings.createSpan({ text: "差异", cls: "zoey-sync-preview__block-heading" });
+    headings.createSpan({ text: "本机区块", cls: "zoey-sync-preview__block-heading" });
+    headings.createSpan({ text: "Git 区块", cls: "zoey-sync-preview__block-heading" });
     file.blocks.forEach((block, index) => {
       const key = this.blockKey(file.path, index);
       const wholeChoice = this.fileChoices.get(file.path);
       const selection: BlockSelection | undefined = this.blockChoices.get(key) ?? (wholeChoice ? { method: wholeChoice === "latest" ? this.latestSide(file) : wholeChoice } : undefined);
-      const blockRow = details.createDiv({ cls: "simple-sync-preview__block" });
-      const title = blockRow.createDiv({ cls: "simple-sync-preview__block-title" });
-      const caption = title.createDiv({ cls: "simple-sync-preview__block-caption" });
+      const blockRow = details.createDiv({ cls: "zoey-sync-preview__block" });
+      const title = blockRow.createDiv({ cls: "zoey-sync-preview__block-title" });
+      const caption = title.createDiv({ cls: "zoey-sync-preview__block-caption" });
       caption.createSpan({ text: `差异 ${index + 1} / ${file.blocks.length}` });
-      caption.createSpan({ text: `约第 ${block.line} 行`, cls: "simple-sync-preview__line" });
-      const merge = this.createButton(title, selection?.method === "merged" ? "取消合并" : "合并", () => this.toggleMerge(file, index), "simple-sync-preview__merge");
+      caption.createSpan({ text: `约第 ${block.line} 行`, cls: "zoey-sync-preview__line" });
+      const merge = this.createButton(title, selection?.method === "merged" ? "取消合并" : "合并", () => this.toggleMerge(file, index), "zoey-sync-preview__merge");
       merge.toggleClass("is-selected", selection?.method === "merged");
       merge.setAttr("aria-pressed", String(selection?.method === "merged"));
 
       if (selection?.method === "merged") {
-        const result = blockRow.createDiv({ cls: "simple-sync-preview__result" });
-        result.createDiv({ text: "合并结果 · 可直接编辑", cls: "simple-sync-preview__result-label" });
-        const editor = result.createEl("textarea", { cls: "simple-sync-preview__editor" });
+        const result = blockRow.createDiv({ cls: "zoey-sync-preview__result" });
+        result.createDiv({ text: "合并结果 · 可直接编辑", cls: "zoey-sync-preview__result-label" });
+        const editor = result.createEl("textarea", { cls: "zoey-sync-preview__editor" });
         editor.rows = Math.min(8, Math.max(4, (selection.text ?? "").split("\n").length + 1));
         editor.value = selection.text ?? "";
         editor.setAttr("aria-label", `${file.path}第 ${index + 1} 处最终内容`);
@@ -210,11 +210,11 @@ export class SimpleSyncConflictPreviewModal extends Modal {
   }
 
   private renderSide(parent: HTMLElement, label: string, content: string, side: Side, selected: boolean, choose: () => void): void {
-    const panel = parent.createEl("button", { cls: `simple-sync-preview__side is-${side}` });
+    const panel = parent.createEl("button", { cls: `zoey-sync-preview__side is-${side}` });
     panel.toggleClass("is-selected", selected);
     panel.setAttr("aria-label", `采用${label}区块`);
     panel.setAttr("aria-pressed", String(selected));
-    panel.createSpan({ text: content, cls: "simple-sync-preview__side-content" });
+    panel.createSpan({ text: content, cls: "zoey-sync-preview__side-content" });
     panel.addEventListener("click", choose);
   }
 

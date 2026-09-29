@@ -1,6 +1,6 @@
 import { DEFAULT_SYNC_IGNORE_PATTERNS, shouldIgnore } from "./dirty";
 import { parseGitStatus } from "./gitStatus";
-import { requestUrl } from "obsidian";
+import { findNestedRepos, nestedGitIgnoreRules, nestedRepoFiles, rebuildNestedRepoTracking, seedNestedRepoFiles, NestedRepo } from "./nestedRepos";
 
 const nodeRequire = (globalThis as unknown as { require?: (name: string) => unknown }).require;
 const nodeFs = nodeRequire ? (nodeRequire("fs") as typeof import("fs")).promises : null;
@@ -28,6 +28,7 @@ export interface SetupPreview {
   remoteOnly: string[];
   localOnly: string[];
   missingIgnoreRules: string[];
+  nestedRepos: NestedRepo[];
   trackedExcludedLocal: string[];
   trackedExcludedRemote: string[];
 }
@@ -46,7 +47,7 @@ export interface VerifiedRepo {
   remoteSha: string;
 }
 
-export type RunCommand = (program: string, args: string[], timeoutMs?: number, onOutput?: (chunk: string) => void, onCancelReady?: (cancel: () => void) => void) => Promise<string>;
+export type RunCommand = (program: string, args: string[], timeoutMs?: number, onOutput?: (chunk: string) => void, stdinText?: string, signal?: AbortSignal) => Promise<string>;
 
 export const SETUP_GITIGNORE = [
   "# Obsidian local state",
@@ -57,8 +58,8 @@ export const SETUP_GITIGNORE = [
   ".obsidian/trash/",
   ".trash/",
   "# Local credentials and agent output",
-  ".obsidian/plugins/simple-sync/data.json",
-  ".obsidian/plugins/simple-link/data.json",
+  ".obsidian/plugins/zoey-sync-test/data.json",
+  ".obsidian/plugins/simple-one-sync/data.json",
   ".obsidian/plugins/obsidian-git/data.json",
   ".obsidian/plugins/recent-files-obsidian/data.json",
   ".codex/output/",
@@ -90,19 +91,9 @@ export function parseGithubRepoUrl(input: string): { url: string; owner: string;
   return { url: `https://github.com/${match[1]}/${match[2]}.git`, owner: match[1], name: match[2] };
 }
 
-export function validateGithubRepositoryName(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) throw new Error("请输入 GitHub 仓库名。");
-  if (name !== trimmed || trimmed.length > 100 || !/^[A-Za-z0-9._-]+$/.test(trimmed)) {
-    throw new Error("仓库名最多 100 个字符，只能包含英文字母、数字、点、连字符和下划线；空格与 ✓ 均不允许。");
-  }
-  return trimmed;
-}
-
 export function explainSetupError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/spawn git\b|git is not recognized/i.test(message)) return "没有检测到 Git。请先安装 Git 后重新检查；刚安装时可能需要重启 Obsidian。";
-  if (/spawn gh\b|gh is not recognized/i.test(message)) return "没有检测到 GitHub CLI。请先安装后重试，或切换到 Token 方案。";
+  if (/ENOENT|is not recognized|spawn (?:git|gh)/i.test(message)) return "缺少 Git 或 GitHub CLI，请先安装后重试。";
   if (/timed? out|could not resolve|DNS|network|failed to connect|unable to access|ETIMEDOUT/i.test(message)) return "网络连接失败或超时，请检查网络与代理后重试。";
   if (/not logged|authentication|token|401|403|permission denied|no authentication/i.test(message)) return "GitHub 登录失效或当前账号没有仓库权限，请重新授权。";
   if (/404|not found|could not read from remote/i.test(message)) return "仓库地址错误，或当前账号无权访问该仓库。";
@@ -143,147 +134,67 @@ function pathBatches(paths: string[]): string[][] {
 }
 
 export class GitSetup {
-  constructor(
-    private vaultPath: string,
-    private run: RunCommand,
-    private getToken: () => string | undefined = () => undefined
-  ) {
+  constructor(private vaultPath: string, private run: RunCommand) {
     if (!nodeFs || !nodePath) throw new Error("首次使用引导仅支持桌面端");
   }
 
-  async checkGit(): Promise<string> {
-    return (await this.run("git", ["--version"])).trim();
-  }
-
   async checkTools(): Promise<void> {
-    await this.checkGit();
+    await this.run("git", ["--version"]);
     await this.run("gh", ["--version"]);
   }
 
-  private async githubApi(path: string): Promise<any> {
-    const token = this.getToken()?.trim();
-    if (!token) return JSON.parse(await this.run("gh", ["api", path]));
-    const response = await requestUrl({
-      url: `https://api.github.com/${path}`,
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2022-11-28"
-      },
-      throw: false
-    });
-    if (response.status < 200 || response.status >= 300) {
-      const detail = typeof response.json?.message === "string" ? `：${response.json.message}` : "";
-      if (response.status === 401) throw new Error(`Token 无效或已过期${detail}`);
-      if (response.status === 403) throw new Error(`Token 权限不足，或 GitHub 暂时限制了请求${detail}`);
-      if (response.status === 404) throw new Error("无法访问该仓库：请检查地址、Token 的仓库范围和权限。");
-      throw new Error(`GitHub API 请求失败（HTTP ${response.status}）${detail}`);
-    }
-    return response.json;
-  }
-
-  async login(onCode?: (code: string) => void, onCancelReady?: (cancel: () => void) => void): Promise<void> {
+  async login(onCode?: (code: string) => void, signal?: AbortSignal): Promise<void> {
     await this.checkTools();
+    if (signal?.aborted) return;
     let output = "";
     let lastCode = "";
-    await this.run("gh", ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web", "--clipboard"], 1200000, (chunk) => {
+    await this.run("gh", ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--web", "--clipboard"], 300000, (chunk) => {
       output += chunk;
       const code = output.match(/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/)?.[0];
       if (code && code !== lastCode) { lastCode = code; onCode?.(code); }
-    }, onCancelReady);
+    }, undefined, signal);
     await this.checkLogin();
-    await this.run("gh", ["auth", "setup-git", "--hostname", "github.com"]);
+  }
+
+  async loginWithToken(token: string): Promise<void> {
+    const value = token.trim();
+    if (!value) throw new Error("请先粘贴 GitHub Token。");
+    await this.checkTools();
+    await this.run("gh", ["auth", "login", "--hostname", "github.com", "--git-protocol", "https", "--with-token"], 120000, undefined, `${value}\n`);
+    await this.checkLogin();
   }
 
   async checkLogin(): Promise<void> {
     await this.run("gh", ["auth", "status", "--active", "--hostname", "github.com"]);
   }
 
-  async validateToken(token: string): Promise<string> {
-    const response = await requestUrl({
-      url: "https://api.github.com/user",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2022-11-28"
-      },
-      throw: false
-    });
-    if (response.status === 401) throw new Error("Token 无效或已过期。请在 GitHub 重新创建 Token，再粘贴并确认。");
-    if (response.status === 403) throw new Error("GitHub 暂时拒绝了 Token 验证请求。请稍后重试；如果持续失败，请重新创建 Token。");
-    if (response.status < 200 || response.status >= 300) throw new Error(`Token 验证失败（HTTP ${response.status}）。请检查 Token 后重试。`);
-    const login = response.json?.login;
-    if (typeof login !== "string" || !login) throw new Error("GitHub 未返回 Token 所属账号，请重新创建并粘贴 Token。");
-    return login;
-  }
-
-  async createPrivateRepository(name: string): Promise<string> {
-    const repositoryName = validateGithubRepositoryName(name);
-    const token = this.getToken()?.trim();
-    if (token) {
-      const response = await requestUrl({
-        url: "https://api.github.com/user/repos",
-        method: "POST",
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${token}`,
-          "X-GitHub-Api-Version": "2022-11-28",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ name: repositoryName, private: true, auto_init: false }),
-        throw: false
-      });
-      if (response.status === 401) throw new Error("Token 无效或已过期。请重新粘贴 Token 后重试。");
-      if (response.status === 403) throw new Error("当前 Token 无权创建仓库。fine-grained Token 需要 Administration 仓库权限（write）；也可以先在 GitHub 创建仓库，再选择“使用已有仓库”。");
-      if (response.status < 200 || response.status >= 300) {
-        const detail = typeof response.json?.message === "string" ? `：${response.json.message}` : "";
-        throw new Error(`创建私人仓库失败（HTTP ${response.status}）${detail}`);
-      }
-      const url = response.json?.clone_url;
-      if (typeof url !== "string" || !url) throw new Error("仓库已创建，但 GitHub 未返回 HTTPS 地址。请改用“使用已有仓库”并填写仓库地址。");
-      return url;
+  async createRepository(name: string): Promise<string> {
+    const repoName = name.trim();
+    if (!/^[A-Za-z0-9._-]{1,100}$/.test(repoName) || repoName === "." || repoName === "..") {
+      throw new Error("仓库名称只能使用字母、数字、点、下划线或连字符，且不能超过 100 个字符。");
     }
-
+    await this.checkTools();
     await this.checkLogin();
-    const user = await this.githubApi("user");
-    await this.run("gh", ["repo", "create", repositoryName, "--private"]);
-    return `https://github.com/${user.login}/${repositoryName}.git`;
-  }
-
-  async configureGitCredentials(): Promise<void> {
-    await this.checkLogin();
-    await this.run("gh", ["auth", "setup-git", "--hostname", "github.com"]);
+    const owner = (await this.run("gh", ["api", "user", "--jq", ".login"])).trim();
+    if (!/^[A-Za-z0-9-]+$/.test(owner)) throw new Error("无法确认当前 GitHub 登录账号，请重新授权。");
+    await this.run("gh", ["repo", "create", `${owner}/${repoName}`, "--private"]);
+    return `https://github.com/${owner}/${repoName}.git`;
   }
 
   async verifyRepository(input: string): Promise<VerifiedRepo> {
     const parsed = parseGithubRepoUrl(input);
-    const token = this.getToken()?.trim();
-    let data: {
-      isPrivate?: boolean;
-      private?: boolean;
-      viewerPermission?: string;
-      defaultBranchRef?: { name?: string } | null;
-      default_branch?: string | null;
-      permissions?: { admin?: boolean; maintain?: boolean; push?: boolean };
-    };
-    if (token) {
-      data = await this.githubApi(`repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.name)}`);
-    } else {
-      await this.checkLogin();
-      const raw = await this.run("gh", ["repo", "view", `${parsed.owner}/${parsed.name}`, "--json", "isPrivate,viewerPermission,defaultBranchRef"]);
-      data = JSON.parse(raw) as typeof data;
-    }
-    if ((data.private ?? data.isPrivate) !== true) throw new Error("该仓库不是私人仓库。请在 GitHub 仓库设置中改为 Private 后重试。");
-    const canWrite = data.permissions?.admin || data.permissions?.maintain || data.permissions?.push ||
-      new Set(["ADMIN", "MAINTAIN", "WRITE"]).has(data.viewerPermission ?? "");
-    if (!canWrite) {
+    await this.checkLogin();
+    const raw = await this.run("gh", ["repo", "view", `${parsed.owner}/${parsed.name}`, "--json", "isPrivate,viewerPermission,defaultBranchRef"]);
+    const data = JSON.parse(raw) as { isPrivate?: boolean; viewerPermission?: string; defaultBranchRef?: { name?: string } | null };
+    if (data.isPrivate !== true) throw new Error("该仓库不是私人仓库。请在 GitHub 仓库设置中改为 Private 后重试。");
+    if (!new Set(["ADMIN", "MAINTAIN", "WRITE"]).has(data.viewerPermission ?? "")) {
       throw new Error("当前 GitHub 账号没有此仓库的写入权限。");
     }
-    const branch = data.default_branch || data.defaultBranchRef?.name || "main";
-    const branchData = (data.default_branch || data.defaultBranchRef?.name)
-      ? await this.githubApi(`repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.name)}/branches/${encodeURIComponent(branch)}`)
-      : undefined;
-    const remoteSha = branchData?.commit?.sha ?? "";
+    const branch = data.defaultBranchRef?.name || "main";
+    const branchRaw = data.defaultBranchRef?.name
+      ? await this.run("gh", ["api", `repos/${parsed.owner}/${parsed.name}/branches/${encodeURIComponent(branch)}`])
+      : "";
+    const remoteSha = branchRaw ? (JSON.parse(branchRaw) as { commit?: { sha?: string } }).commit?.sha ?? "" : "";
     return { ...parsed, branch, remoteSha };
   }
 
@@ -300,11 +211,12 @@ export class GitSetup {
     }
   }
 
-  private async localFiles(root: string | null): Promise<string[]> {
+  private async localFiles(root: string | null, nestedRepos: readonly NestedRepo[]): Promise<string[]> {
     if (root) {
       const output = await this.run("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]);
+      const nested = await nestedRepoFiles(this.vaultPath, nestedRepos, (args) => this.run("git", args));
       const files: string[] = [];
-      for (const name of new Set(output.split("\0").filter(Boolean))) {
+      for (const name of new Set([...output.split("\0").filter(Boolean), ...nested])) {
         try {
           if ((await nodeFs!.stat(nodePath!.join(this.vaultPath, name))).isFile()) files.push(name);
         } catch { /* tracked file deleted locally */ }
@@ -322,7 +234,6 @@ export class GitSetup {
         const absolute = nodePath!.join(folder, item.name);
         const name = nodePath!.relative(this.vaultPath, absolute).replace(/\\/g, "/");
         if (item.name === ".git") {
-          if (folder !== this.vaultPath) throw new Error(`Vault 内包含另一个 Git 仓库：${nodePath!.relative(this.vaultPath, folder)}。请先单独处理。`);
           continue;
         }
         if (shouldIgnore(name, patterns)) continue;
@@ -332,18 +243,6 @@ export class GitSetup {
     };
     await visit(this.vaultPath);
     return found.sort();
-  }
-
-  private async assertNoNestedGit(folder: string): Promise<void> {
-    for (const item of await nodeFs!.readdir(folder, { withFileTypes: true })) {
-      const absolute = nodePath!.join(folder, item.name);
-      const name = nodePath!.relative(this.vaultPath, absolute).replace(/\\/g, "/");
-      if (item.name === ".git") {
-        if (folder !== this.vaultPath) throw new Error(`Vault 内包含另一个 Git 仓库：${nodePath!.relative(this.vaultPath, folder)}。请先单独处理。`);
-        continue;
-      }
-      if (item.isDirectory() && !shouldIgnore(name, DEFAULT_SYNC_IGNORE_PATTERNS)) await this.assertNoNestedGit(absolute);
-    }
   }
 
   async preview(repo: VerifiedRepo): Promise<SetupPreview> {
@@ -369,14 +268,16 @@ export class GitSetup {
         throw new Error("现有 origin 指向其他仓库或包含凭据。向导不会覆盖它。");
       }
     }
-    const localFiles = await this.localFiles(localRoot);
+    const nestedRepos = await findNestedRepos(this.vaultPath);
+    const nestedUserData = new Set((await nestedRepoFiles(this.vaultPath, nestedRepos, (args) => this.run("git", args)))
+      .filter((name) => nestedRepos.some((repo) => name === `${repo.directory}/data.json`)));
+    const localFiles = await this.localFiles(localRoot, nestedRepos);
     const trackedLocal = localRoot
       ? (await this.run("git", ["ls-files", "--cached", "-z"])).split("\0").filter(Boolean)
       : [];
     const trackedIgnoredLocal = localRoot
       ? (await this.run("git", ["ls-files", "--cached", "--ignored", "--exclude-standard", "-z"])).split("\0").filter(Boolean)
       : [];
-    if (localRoot) await this.assertNoNestedGit(this.vaultPath);
     const localSignatures: Record<string, string> = {};
     const localGitBlobs: Record<string, string> = {};
     for (const file of localFiles) {
@@ -415,25 +316,27 @@ export class GitSetup {
       throw new Error(`本机当前分支是 ${localBranch}，远端默认分支是 ${repo.branch}。请先切换到要同步的 ${repo.branch} 分支，再重新检查。`);
     }
     if (localRoot) {
-      if ([".obsidian/plugins/simple-sync/data.json", ".obsidian/plugins/simple-link/data.json"].some((path) => trackedLocal.includes(path))) {
+      if (trackedLocal.includes(".obsidian/plugins/simple-one-sync/data.json") || trackedLocal.includes(".obsidian/plugins/zoey-sync-test/data.json")) {
         throw new Error("本地 Git 正在跟踪插件的本机凭据文件 data.json。请先停止跟踪该文件，再继续接入。");
       }
       const staged = await this.run("git", ["ls-files", "--stage", "-z"]);
-      if (staged.split("\0").some((line) => line.startsWith("160000 "))) {
+      const nestedPaths = new Set(nestedRepos.map((item) => item.directory));
+      if (staged.split("\0").some((line) => line.startsWith("160000 ") && !nestedPaths.has(line.slice(line.indexOf("\t") + 1)))) {
         throw new Error("本地 Git 包含子模块，向导暂不支持自动接入。");
       }
     }
     let remoteFiles: string[] = [];
     const remoteBlobs: Record<string, { sha: string; size: number }> = {};
     if (repo.remoteSha) {
-      const tree = await this.githubApi(`repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/git/trees/${repo.remoteSha}?recursive=1`) as { truncated?: boolean; tree?: Array<{ path: string; type: string; sha?: string; size?: number }> };
+      const raw = await this.run("gh", ["api", `repos/${repo.owner}/${repo.name}/git/trees/${repo.remoteSha}?recursive=1`]);
+      const tree = JSON.parse(raw) as { truncated?: boolean; tree?: Array<{ path: string; type: string; sha?: string; size?: number }> };
       if (tree.truncated) throw new Error("远端文件列表过大，GitHub 只返回了部分文件；向导已停止，请先缩小仓库或手动接入。");
       if (tree.tree?.some((item) => item.type === "commit")) throw new Error("远端仓库包含 Git 子模块，向导暂不支持自动接入。");
       remoteFiles = (tree.tree ?? []).filter((item) => item.type === "blob").map((item) => {
         remoteBlobs[item.path] = { sha: item.sha ?? "", size: item.size ?? 0 };
         return item.path;
       }).sort();
-      if ([".obsidian/plugins/simple-sync/data.json", ".obsidian/plugins/simple-link/data.json"].some((path) => remoteFiles.includes(path))) {
+      if (remoteFiles.includes(".obsidian/plugins/simple-one-sync/data.json") || remoteFiles.includes(".obsidian/plugins/zoey-sync-test/data.json")) {
         throw new Error("远端正在跟踪插件的本机凭据文件 data.json。请先从远端历史中处理它，再继续接入。");
       }
     }
@@ -464,20 +367,22 @@ export class GitSetup {
       remoteFiles.some((name) => hasFileAsParent(name, localSet));
     if (prefixCollision) throw new Error("两端存在同名文件与目录冲突，需要先手动整理后再接入。");
     const existingIgnore = await this.readIgnore();
-    const effectiveIgnore = [...existingIgnore.split(/\r?\n/), ...SETUP_GITIGNORE];
+    const nestedRules = nestedGitIgnoreRules(nestedRepos);
+    const effectiveIgnore = [...existingIgnore.split(/\r?\n/), ...SETUP_GITIGNORE, ...nestedRules];
     return {
       vaultPath: this.vaultPath, repoUrl: repo.url, branch: repo.branch, remoteSha: repo.remoteSha, alreadyLinked, relatedHistory,
       localRoot, localBranch, origin, localFiles, localSignatures, remoteFiles, remoteBlobs, overlaps, identicalCount,
       remoteOnly,
       localOnly: localFiles.filter((name) => !remoteSet.has(name)),
-      missingIgnoreRules: missingSetupIgnoreRules(existingIgnore),
-      trackedExcludedLocal: [...new Set([...trackedIgnoredLocal, ...trackedLocal.filter((name) => shouldIgnore(name, SETUP_GITIGNORE))])].sort(),
+      missingIgnoreRules: [...missingSetupIgnoreRules(existingIgnore), ...nestedRules.filter((rule) => !existingIgnore.split(/\r?\n/).includes(rule))],
+      nestedRepos,
+      trackedExcludedLocal: [...new Set([...trackedIgnoredLocal.filter((name) => !nestedUserData.has(name)), ...trackedLocal.filter((name) => shouldIgnore(name, SETUP_GITIGNORE))])].sort(),
       trackedExcludedRemote: remoteFiles.filter((name) => shouldIgnore(name, effectiveIgnore))
     };
   }
 
   async readOverlap(repo: VerifiedRepo, preview: SetupPreview, file: string): Promise<SetupOverlapContent> {
-    if (!preview.overlaps.includes(file)) throw new Error("该文件不在同名文件列表中，请重新检查第 5 步。");
+    if (!preview.overlaps.includes(file)) throw new Error("该文件不在同名文件列表中，请重新检查第 3 步。");
     const absolute = nodePath!.resolve(this.vaultPath, file);
     const vault = nodePath!.resolve(this.vaultPath);
     if (!absolute.toLowerCase().startsWith(`${vault}${nodePath!.sep}`.toLowerCase())) throw new Error("文件路径超出 Vault");
@@ -486,9 +391,10 @@ export class GitSetup {
       ? `文件较大（${localStat.size} 字节），请在 Obsidian 中打开本机文件查看。`
       : this.describeContent(await nodeFs!.readFile(absolute));
     const blob = preview.remoteBlobs[file];
-    if (!blob?.sha) throw new Error("缺少远端文件信息，请重新检查第 5 步。");
+    if (!blob?.sha) throw new Error("缺少远端文件信息，请重新检查第 3 步。");
     if (blob.size > 100000) return { path: file, local, remote: `远端文件较大（${blob.size} 字节），请在 GitHub 仓库网页查看。` };
-    const data = await this.githubApi(`repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/git/blobs/${blob.sha}`) as { content?: string; encoding?: string };
+    const raw = await this.run("gh", ["api", `repos/${repo.owner}/${repo.name}/git/blobs/${blob.sha}`]);
+    const data = JSON.parse(raw) as { content?: string; encoding?: string };
     if (data.encoding !== "base64" || !data.content) throw new Error("无法读取远端文件内容");
     return { path: file, local, remote: this.describeContent(Buffer.from(data.content.replace(/\s/g, ""), "base64")) };
   }
@@ -499,22 +405,23 @@ export class GitSetup {
     catch { return `非 UTF-8 文本或二进制文件（${buffer.length} 字节）。`; }
   }
 
-  private async appendIgnore(): Promise<void> {
+  private async appendIgnore(repos: readonly NestedRepo[]): Promise<void> {
     const file = nodePath!.join(this.vaultPath, ".gitignore");
     const existing = await this.readIgnore();
-    const missing = missingSetupIgnoreRules(existing);
+    const missing = [...missingSetupIgnoreRules(existing), ...nestedGitIgnoreRules(repos).filter((rule) => !existing.split(/\r?\n/).includes(rule))];
     if (!missing.length) return;
     const eol = existing.includes("\r\n") ? "\r\n" : "\n";
     const separator = existing ? `${existing.endsWith("\n") ? "" : eol}${eol}` : "";
     await nodeFs!.writeFile(file, `${existing}${separator}# Simple Link recommended local exclusions${eol}${missing.join(eol)}${eol}`, "utf8");
   }
 
-  private async rebuildTrackingIndex(paths: string[], skipped: ReadonlySet<string>): Promise<void> {
+  private async rebuildTrackingIndex(paths: string[], skipped: ReadonlySet<string>, repos: readonly NestedRepo[]): Promise<void> {
     for (const path of paths) {
       try { await this.run("git", ["check-ignore", "--no-index", "-q", "--", path]); }
       catch { throw new Error(`不能确认 .gitignore 会排除 ${path}，已停止重建 Git 追踪。请检查排除规则后重新预览。`); }
     }
     await this.run("git", ["rm", "-r", "-f", "--cached", "--ignore-unmatch", "--", "."]);
+    await seedNestedRepoFiles(this.vaultPath, repos, (args) => this.run("git", args), skipped);
     await this.run("git", ["add", "-A"]);
     if (skipped.size) {
       const staged = new Set((await this.run("git", ["diff", "--cached", "--name-only", "-z"])).split("\0").filter(Boolean));
@@ -522,7 +429,9 @@ export class GitSetup {
         await this.run("git", ["reset", "-q", "HEAD", "--", ...batch]);
       }
     }
-    const remaining = (await this.run("git", ["ls-files", "-ci", "--exclude-standard", "-z"])).split("\0").filter(Boolean);
+    const allowedData = new Set((await nestedRepoFiles(this.vaultPath, repos, (args) => this.run("git", args)))
+      .filter((name) => repos.some((repo) => name === `${repo.directory}/data.json`)));
+    const remaining = (await this.run("git", ["ls-files", "-ci", "--exclude-standard", "-z"])).split("\0").filter((name) => name && !allowedData.has(name));
     if (remaining.length) throw new Error(`重建后仍有 ${remaining.length} 个被忽略的文件受到追踪，请检查 .gitignore 后重试。`);
   }
 
@@ -541,23 +450,23 @@ export class GitSetup {
         latest.relatedHistory !== prior.relatedHistory ||
         JSON.stringify(latest.remoteFiles) !== JSON.stringify(prior.remoteFiles) ||
         latest.remoteSha !== prior.remoteSha || latest.origin !== prior.origin || latest.localBranch !== prior.localBranch) {
-      throw new Error("远端或仓库状态在预览后发生变化，请重新检查第 5 步。");
+      throw new Error("远端或仓库状态在预览后发生变化，请重新检查第 3 步。");
     }
     if (JSON.stringify(latest.trackedExcludedLocal) !== JSON.stringify(prior.trackedExcludedLocal) ||
         JSON.stringify(latest.trackedExcludedRemote) !== JSON.stringify(prior.trackedExcludedRemote)) {
-      throw new Error("已被 Git 跟踪的忽略文件在预览后发生变化，请重新检查第 5 步。");
+      throw new Error("已被 Git 跟踪的忽略文件在预览后发生变化，请重新检查第 3 步。");
     }
     const changedSincePreview = new Set([...new Set([...prior.localFiles, ...latest.localFiles])]
       .filter((file) => prior.localSignatures[file] !== latest.localSignatures[file]));
     if (changedSincePreview.has(".gitignore") ||
         JSON.stringify(latest.missingIgnoreRules) !== JSON.stringify(prior.missingIgnoreRules)) {
-      throw new Error(".gitignore 在预览后发生变化，请重新检查第 5 步的待补规则。");
+      throw new Error(".gitignore 在预览后发生变化，请重新检查第 3 步的待补规则。");
     }
     const active = new Set([...changedSincePreview, ...activelyChangingPaths]);
     const pluginDirs = new Set([...active].map((file) => /^\.obsidian\/plugins\/[^/]+\//.exec(file)?.[0]).filter((dir): dir is string => !!dir));
     const changedOutsidePlugins = [...changedSincePreview].filter((file) => ![...pluginDirs].some((dir) => file.startsWith(dir)));
     if (!latest.alreadyLinked && changedOutsidePlugins.length > 0) {
-      throw new Error("首次合并前本地文件在预览后发生变化，请重新检查第 5 步。");
+      throw new Error("首次合并前本地文件在预览后发生变化，请重新检查第 3 步。");
     }
     const skipped = new Set<string>(changedSincePreview);
     const changes = latest.localRoot
@@ -569,7 +478,7 @@ export class GitSetup {
           (active.has(file) || [...pluginDirs].some((dir) => file.startsWith(dir)))) skipped.add(file);
     }
     if (!latest.relatedHistory && latest.overlaps.some((file) => skipped.has(file))) {
-      throw new Error("正在编辑的插件与远端存在同名文件。请暂停编辑并重新检查第 5 步，避免首次合并覆盖本机文件。");
+      throw new Error("正在编辑的插件与远端存在同名文件。请暂停编辑并重新检查第 3 步，避免首次合并覆盖本机文件。");
     }
     if (latest.localRoot) {
       for (const change of changes) {
@@ -583,7 +492,7 @@ export class GitSetup {
       const base = (await this.run("git", ["merge-base", "HEAD", latest.remoteSha])).trim();
       const remoteChanges = (await this.run("git", ["diff", "--name-only", "-z", base, latest.remoteSha])).split("\0").filter(Boolean);
       const overlap = remoteChanges.find((file) => skipped.has(file));
-      if (overlap) throw new Error(`远端也修改了正在编辑的文件 ${overlap}。请先暂停编辑并处理该文件，再重新检查第 5 步。`);
+      if (overlap) throw new Error(`远端也修改了正在编辑的文件 ${overlap}。请先暂停编辑并处理该文件，再重新检查第 3 步。`);
     }
     for (const file of latest.overlaps) if (!choices[file]) throw new Error(`请选择同名文件的保留版本：${file}`);
     if (!author.name.trim() || !author.email.trim() || author.name === "default" || author.email === "default@default.com") {
@@ -594,10 +503,12 @@ export class GitSetup {
     await this.run("git", ["config", "user.name", author.name]);
     await this.run("git", ["config", "user.email", author.email]);
     if (!latest.origin) await this.run("git", ["remote", "add", "origin", repo.url]);
-    await this.appendIgnore();
+    await this.appendIgnore(latest.nestedRepos);
+    if (latest.localRoot) await rebuildNestedRepoTracking(this.vaultPath, latest.nestedRepos, (args) => this.run("git", args));
     let hasHead = false;
     try { await this.run("git", ["rev-parse", "--verify", "HEAD"]); hasHead = true; }
     catch { /* new repository */ }
+    await seedNestedRepoFiles(this.vaultPath, latest.nestedRepos, (args) => this.run("git", args), skipped);
     if (hasHead) await this.run("git", ["add", "-A"]);
     else {
       const included = [...new Set([...latest.localFiles, ".gitignore"])].filter((file) => !skipped.has(file));
@@ -625,7 +536,7 @@ export class GitSetup {
       for (const batch of pathBatches(changedDuringStage)) await this.run("git", ["reset", "-q", "HEAD", "--", ...batch]);
       for (const file of changedDuringStage) skipped.add(file);
     }
-    if (rebuildTracking && hasHead) await this.rebuildTrackingIndex(latest.trackedExcludedLocal, skipped);
+    if (rebuildTracking && hasHead) await this.rebuildTrackingIndex(latest.trackedExcludedLocal, skipped, latest.nestedRepos);
     try {
       await this.run("git", ["diff", "--cached", "--quiet"]);
     } catch {
@@ -645,14 +556,14 @@ export class GitSetup {
         } catch (error) {
           try { await this.run("git", ["merge", "--abort"]); } catch { /* retain Git's diagnostic */ }
           throw new Error(latest.relatedHistory
-            ? `同源仓库合并出现冲突；已尝试撤销本次合并。请先处理冲突后重新检查第 5 步。${String(error)}`
+            ? `同源仓库合并出现冲突；已尝试撤销本次合并。请先处理冲突后重新检查第 3 步。${String(error)}`
             : String(error));
         }
         try {
           const fromRemote = latest.relatedHistory ? [] :
             [...latest.remoteOnly, ...latest.overlaps.filter((name) => choices[name] === "remote")];
           for (const batch of pathBatches(fromRemote)) await this.run("git", ["checkout", "FETCH_HEAD", "--", ...batch]);
-          await this.appendIgnore();
+          await this.appendIgnore(latest.nestedRepos);
           await this.run("git", ["add", "-A"]);
           if (skipped.size > 0) {
             const stagedPaths = new Set((await this.run("git", ["diff", "--cached", "--name-only", "-z"])).split("\0").filter(Boolean));
@@ -661,7 +572,7 @@ export class GitSetup {
             }
           }
           if (rebuildTracking) await this.rebuildTrackingIndex(
-            [...new Set([...latest.trackedExcludedLocal, ...latest.trackedExcludedRemote])], skipped);
+            [...new Set([...latest.trackedExcludedLocal, ...latest.trackedExcludedRemote])], skipped, latest.nestedRepos);
           await this.run("git", ["commit", "-m", "Simple Link connect local and remote notes"]);
         } catch (error) {
           try { await this.run("git", ["merge", "--abort"]); } catch { /* keep Git's diagnostics */ }

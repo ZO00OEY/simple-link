@@ -8,8 +8,7 @@ export interface DirtyEntry {
 
 export const DEFAULT_SYNC_IGNORE_PATTERNS = [
   ".git/",
-  ".simple-sync/",
-  ".simple-link/",
+  ".zoey-sync/",
   ".obsidian/cache/",
   ".obsidian/workspace.json",
   ".obsidian/workspaces/",
@@ -24,6 +23,8 @@ export const DEFAULT_SYNC_IGNORE_PATTERNS = [
   ".smart-env/",
   ".obsidian/plugins/recent-files-obsidian/data.json",
   ".obsidian/workspace-mobile.json",
+  ".obsidian/plugins/zoey-sync-test/data.json",
+  ".obsidian/plugins/simple-one-sync/data.json",
   ".obsidian/plugins/simple-sync/data.json",
   ".obsidian/plugins/simple-link/data.json",
   "node_modules/",
