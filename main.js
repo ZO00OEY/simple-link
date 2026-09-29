@@ -1010,7 +1010,7 @@ var GitSetup = class {
     if (!missing.length) return;
     const eol = existing.includes("\r\n") ? "\r\n" : "\n";
     const separator = existing ? `${existing.endsWith("\n") ? "" : eol}${eol}` : "";
-    await nodeFs.writeFile(file, `${existing}${separator}# Simple Link recommended local exclusions${eol}${missing.join(eol)}${eol}`, "utf8");
+    await nodeFs.writeFile(file, `${existing}${separator}# Simple One Sync recommended local exclusions${eol}${missing.join(eol)}${eol}`, "utf8");
   }
   async rebuildTrackingIndex(paths, skipped) {
     for (const path of paths) {
@@ -1120,7 +1120,7 @@ var GitSetup = class {
     try {
       await this.run("git", ["diff", "--cached", "--quiet"]);
     } catch {
-      await this.run("git", ["commit", "-m", "Simple Link initial vault snapshot"]);
+      await this.run("git", ["commit", "-m", "Simple One Sync initial vault snapshot"]);
     }
     if (repo.remoteSha) {
       await this.run("git", ["fetch", "origin", repo.branch]);
@@ -1157,7 +1157,7 @@ var GitSetup = class {
             [.../* @__PURE__ */ new Set([...latest.trackedExcludedLocal, ...latest.trackedExcludedRemote])],
             skipped
           );
-          await this.run("git", ["commit", "-m", "Simple Link connect local and remote notes"]);
+          await this.run("git", ["commit", "-m", "Simple One Sync connect local and remote notes"]);
         } catch (error) {
           try {
             await this.run("git", ["merge", "--abort"]);
@@ -1365,7 +1365,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
     if (this.featureActive) return;
     this.featureActive = true;
     if (this.statusEl) this.statusEl.hidden = false;
-    this.ribbonEl = this.addRibbonIcon("refresh-cw", "\u6253\u5F00 Simple Link", () => void this.openSyncView());
+    this.ribbonEl = this.addRibbonIcon("refresh-cw", "\u6253\u5F00 Simple One Sync", () => void this.openSyncView());
     this.registerViewRefreshEvents();
     if (import_obsidian3.Platform.isMobile) {
       this.registerMobileEvents();
@@ -1520,8 +1520,8 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
       return pickSharedSettings(parsed);
     } catch (error) {
       this.sharedSettingsWritable = false;
-      console.error("Simple Link shared settings", error);
-      new import_obsidian3.Notice("Simple Link\uFF1A\u540C\u6B65\u914D\u7F6E\u6587\u4EF6\u5B58\u5728\u51B2\u7A81\u6216\u683C\u5F0F\u9519\u8BEF\uFF0C\u5DF2\u505C\u6B62\u8986\u76D6\u8BE5\u6587\u4EF6", 1e4);
+      console.error("Simple One Sync shared settings", error);
+      new import_obsidian3.Notice("Simple One Sync\uFF1A\u540C\u6B65\u914D\u7F6E\u6587\u4EF6\u5B58\u5728\u51B2\u7A81\u6216\u683C\u5F0F\u9519\u8BEF\uFF0C\u5DF2\u505C\u6B62\u8986\u76D6\u8BE5\u6587\u4EF6", 1e4);
       return null;
     }
   }
@@ -1557,7 +1557,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
       this.settings.errorLogs = this.settings.errorLogs.slice(-MAX_ERROR_LOGS);
       await this.saveSettings();
     } catch (saveError) {
-      console.error("Simple Link error log", saveError);
+      console.error("Simple One Sync error log", saveError);
     }
   }
   getRecentErrorLogs() {
@@ -1576,7 +1576,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
     await this.refreshSyncView();
   }
   setStatus(text) {
-    if (this.statusEl) this.statusEl.setText(`Simple Link: ${text}`);
+    if (this.statusEl) this.statusEl.setText(`Simple One Sync: ${text}`);
   }
   setSyncActivity(text, tone) {
     this.syncActivity = { text, tone };
@@ -1744,7 +1744,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
         await this.refreshSyncView();
         return;
       }
-      console.error("Simple Link desktop task", error);
+      console.error("Simple One Sync desktop task", error);
       if (errorContext) {
         await this.recordError(errorContext, [...this.desktopGitTrace, describeGitError(error)].join("\n"));
         if (errorContext.includes("Push") || errorContext.includes("\u540C\u6B65")) {
@@ -1887,7 +1887,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
       const hadChanges = await this.hasDesktopChanges();
       let recoveryStash = "";
       if (hadChanges) {
-        const message = `Simple Link repair backup ${(/* @__PURE__ */ new Date()).toISOString()}`;
+        const message = `Simple One Sync repair backup ${(/* @__PURE__ */ new Date()).toISOString()}`;
         await this.git(["stash", "push", "--include-untracked", "-m", message]);
         recoveryStash = (await this.git(["stash", "list", "-1", "--format=%gd"])).trim();
         if (!recoveryStash) throw new Error("\u65E0\u6CD5\u5EFA\u7ACB\u672C\u673A\u4FEE\u6539\u7684\u6062\u590D\u5907\u4EFD\uFF0C\u5DF2\u505C\u6B62\u4FEE\u590D");
@@ -1979,7 +1979,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
   }
   async openSyncView(refreshExisting = true) {
     if (!this.settings.enabled) {
-      new import_obsidian3.Notice("Simple Link \u5DF2\u5173\u95ED\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u542F\u7528");
+      new import_obsidian3.Notice("Simple One Sync \u5DF2\u5173\u95ED\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u542F\u7528");
       return;
     }
     let leaf = this.app.workspace.getLeavesOfType(SimpleSyncView.type)[0] ?? null;
@@ -2144,10 +2144,10 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
         if (!this.settings.setupComplete) throw new Error("\u8BF7\u5148\u5B8C\u6210\u9996\u6B21\u4F7F\u7528\u5F15\u5BFC");
         await this.testDesktopGit();
       }
-      if (showNotice) new import_obsidian3.Notice(`Simple Link\uFF1A${import_obsidian3.Platform.isMobile ? "\u670D\u52A1\u5668" : "Git"}\u8FDE\u63A5\u6B63\u5E38`);
+      if (showNotice) new import_obsidian3.Notice(`Simple One Sync\uFF1A${import_obsidian3.Platform.isMobile ? "\u670D\u52A1\u5668" : "Git"}\u8FDE\u63A5\u6B63\u5E38`);
     } catch (error) {
       await this.recordError("\u6D4B\u8BD5\u8FDE\u63A5", error);
-      if (showNotice) new import_obsidian3.Notice(`Simple Link\uFF1A${messageOf2(error)}`, 8e3);
+      if (showNotice) new import_obsidian3.Notice(`Simple One Sync\uFF1A${messageOf2(error)}`, 8e3);
       throw error;
     }
   }
@@ -2157,11 +2157,11 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
       return;
     }
     if (!this.settings.enabled) {
-      if (showNotice) new import_obsidian3.Notice("Simple Link \u5DF2\u5173\u95ED\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u542F\u7528");
+      if (showNotice) new import_obsidian3.Notice("Simple One Sync \u5DF2\u5173\u95ED\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u542F\u7528");
       return;
     }
     if (this.syncing) {
-      if (showNotice) new import_obsidian3.Notice("Simple Link\uFF1A\u5DF2\u6709\u540C\u6B65\u4EFB\u52A1\u6B63\u5728\u8FD0\u884C");
+      if (showNotice) new import_obsidian3.Notice("Simple One Sync\uFF1A\u5DF2\u6709\u540C\u6B65\u4EFB\u52A1\u6B63\u5728\u8FD0\u884C");
       return;
     }
     this.syncing = true;
@@ -2177,7 +2177,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
         this.setStatus("\u540C\u6B65\u68C0\u67E5\u5B8C\u6210");
       }
       await this.recordSuccess(showNotice ? "\u624B\u52A8\u540C\u6B65" : "\u81EA\u52A8\u540C\u6B65", "\u540C\u6B65\u68C0\u67E5\u5B8C\u6210");
-      if (showNotice) new import_obsidian3.Notice("Simple Link\uFF1A\u540C\u6B65\u5B8C\u6210");
+      if (showNotice) new import_obsidian3.Notice("Simple One Sync\uFF1A\u540C\u6B65\u5B8C\u6210");
     } catch (error) {
       if (error instanceof SyncDeferredError) {
         this.setStatus(error.message);
@@ -2187,8 +2187,8 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
       if (!import_obsidian3.Platform.isMobile) await this.scheduleDesktopPushRetry();
       await this.recordError(showNotice ? "\u624B\u52A8\u540C\u6B65" : "\u81EA\u52A8\u540C\u6B65", error);
       this.setStatus(import_obsidian3.Platform.isMobile ? "\u540C\u6B65\u5931\u8D25" : "\u540C\u6B65\u5931\u8D25 \xB7 5 \u5206\u949F\u540E\u91CD\u8BD5");
-      if (showNotice) new import_obsidian3.Notice(`Simple Link\uFF1A${messageOf2(error)}`, 1e4);
-      else console.error("Simple Link", error);
+      if (showNotice) new import_obsidian3.Notice(`Simple One Sync\uFF1A${messageOf2(error)}`, 1e4);
+      else console.error("Simple One Sync", error);
     } finally {
       this.syncing = false;
       await this.refreshSyncView();
@@ -2200,7 +2200,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
       return;
     }
     if (!this.settings.enabled) {
-      if (showNotice) new import_obsidian3.Notice("Simple Link \u5DF2\u5173\u95ED\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u542F\u7528");
+      if (showNotice) new import_obsidian3.Notice("Simple One Sync \u5DF2\u5173\u95ED\uFF0C\u8BF7\u5148\u5728\u8BBE\u7F6E\u4E2D\u542F\u7528");
       return;
     }
     if (import_obsidian3.Platform.isMobile) {
@@ -2208,7 +2208,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
       return;
     }
     if (this.syncing) {
-      if (showNotice) new import_obsidian3.Notice("Simple Link\uFF1A\u5DF2\u6709\u4EFB\u52A1\u6B63\u5728\u8FD0\u884C");
+      if (showNotice) new import_obsidian3.Notice("Simple One Sync\uFF1A\u5DF2\u6709\u4EFB\u52A1\u6B63\u5728\u8FD0\u884C");
       return;
     }
     this.syncing = true;
@@ -2224,13 +2224,13 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
       this.setStatus(result.committed ? `\u5DF2 Commit${skippedText}` : `\u6CA1\u6709\u53EF Commit \u6587\u4EF6${skippedText}`);
       if (showNotice) {
         new import_obsidian3.Notice(
-          result.committed ? `Simple Link\uFF1ACommit \u5B8C\u6210${skippedText}` : `Simple Link\uFF1A\u6CA1\u6709\u53EF Commit \u6587\u4EF6${skippedText}`
+          result.committed ? `Simple One Sync\uFF1ACommit \u5B8C\u6210${skippedText}` : `Simple One Sync\uFF1A\u6CA1\u6709\u53EF Commit \u6587\u4EF6${skippedText}`
         );
       }
     } catch (error) {
       await this.recordError("\u624B\u52A8 Commit", error);
       this.setStatus("Commit \u5931\u8D25");
-      if (showNotice) new import_obsidian3.Notice(`Simple Link\uFF1A${messageOf2(error)}`, 1e4);
+      if (showNotice) new import_obsidian3.Notice(`Simple One Sync\uFF1A${messageOf2(error)}`, 1e4);
     } finally {
       this.syncing = false;
       await this.refreshSyncView();
@@ -2289,7 +2289,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
     this.settings.pendingRequestId = "";
     await this.saveSettings();
     const triggerSync = await this.handleCommands(response.commands ?? []);
-    if (response.gitWarning) new import_obsidian3.Notice(`Simple Link\uFF1AGitHub \u6682\u65F6\u4E0D\u53EF\u7528\uFF0C\u672C\u5730\u670D\u52A1\u5668\u540C\u6B65\u5DF2\u5B8C\u6210`, 7e3);
+    if (response.gitWarning) new import_obsidian3.Notice(`Simple One Sync\uFF1AGitHub \u6682\u65F6\u4E0D\u53EF\u7528\uFF0C\u672C\u5730\u670D\u52A1\u5668\u540C\u6B65\u5DF2\u5B8C\u6210`, 7e3);
     if (triggerSync) window.setTimeout(() => void this.syncNow(false), 250);
   }
   async ensureParent(path) {
@@ -2330,7 +2330,7 @@ var SimpleSyncPlugin = class extends import_obsidian3.Plugin {
       const triggerSync = await this.handleCommands(result.commands);
       if (triggerSync) void this.syncNow(false);
     } catch (error) {
-      console.error("Simple Link command poll", error);
+      console.error("Simple One Sync command poll", error);
       await this.recordError("\u6307\u4EE4\u68C0\u67E5", error);
     }
   }
@@ -2354,7 +2354,7 @@ ${command.body}` : ""}`, 8e3);
         }
         acknowledged.push(command.id);
       } catch (error) {
-        new import_obsidian3.Notice(`Simple Link \u6307\u4EE4\u5931\u8D25\uFF1A${messageOf2(error)}`, 8e3);
+        new import_obsidian3.Notice(`Simple One Sync \u6307\u4EE4\u5931\u8D25\uFF1A${messageOf2(error)}`, 8e3);
       }
     }
     if (acknowledged.length) {
@@ -2865,7 +2865,7 @@ ${command.body}` : ""}`, 8e3);
     } catch (error) {
       if (error instanceof SyncDeferredError) return;
       if (this.settings.pendingMergePushAfterResolve) await this.scheduleDesktopPushRetry();
-      new import_obsidian3.Notice(`Simple Link\uFF1A\u65E0\u6CD5\u7EE7\u7EED\u5904\u7406\u51B2\u7A81\u3002${messageOf2(error)}`, 12e3);
+      new import_obsidian3.Notice(`Simple One Sync\uFF1A\u65E0\u6CD5\u7EE7\u7EED\u5904\u7406\u51B2\u7A81\u3002${messageOf2(error)}`, 12e3);
     }
   }
   async openConflictView(paths) {
@@ -2937,17 +2937,17 @@ var GitRepairModal = class extends import_obsidian3.Modal {
       if (this.repairing) return;
       this.repairing = true;
       this.close();
-      new import_obsidian3.Notice("Simple Link\uFF1A\u6B63\u5728\u6062\u590D\u672C\u673A\u7248\u672C\u5E76\u68C0\u67E5\u4E91\u7AEF\u66F4\u65B0\u2026", 8e3);
+      new import_obsidian3.Notice("Simple One Sync\uFF1A\u6B63\u5728\u6062\u590D\u672C\u673A\u7248\u672C\u5E76\u68C0\u67E5\u4E91\u7AEF\u66F4\u65B0\u2026", 8e3);
       void this.plugin.repairInterruptedGitOperation().then((result) => {
         new import_obsidian3.Notice(
-          `Simple Link\uFF1A${result.operation} \u5F02\u5E38\u72B6\u6001\u5DF2\u9000\u51FA${result.restoredLocalChanges ? "\uFF0C\u672C\u673A\u4FEE\u6539\u5DF2\u6062\u590D" : ""}\uFF1B\u672C\u5730 Commit \u548C\u4E91\u7AEF\u5408\u5E76\u68C0\u67E5\u5DF2\u5B8C\u6210\uFF0C\u5C1A\u672A\u7ACB\u5373 Push`,
+          `Simple One Sync\uFF1A${result.operation} \u5F02\u5E38\u72B6\u6001\u5DF2\u9000\u51FA${result.restoredLocalChanges ? "\uFF0C\u672C\u673A\u4FEE\u6539\u5DF2\u6062\u590D" : ""}\uFF1B\u672C\u5730 Commit \u548C\u4E91\u7AEF\u5408\u5E76\u68C0\u67E5\u5DF2\u5B8C\u6210\uFF0C\u5C1A\u672A\u7ACB\u5373 Push`,
           1e4
         );
       }).catch((error) => {
         if (error instanceof SyncDeferredError) {
-          new import_obsidian3.Notice("Simple Link\uFF1A\u5F02\u5E38\u72B6\u6001\u5DF2\u9000\u51FA\uFF0C\u672C\u673A\u5185\u5BB9\u5DF2\u91CD\u65B0 Commit\uFF1B\u5408\u5E76\u51B2\u7A81\u5DF2\u4FDD\u7559\u5728\u540C\u6B65\u9762\u677F\u7B49\u5F85\u5904\u7406", 12e3);
+          new import_obsidian3.Notice("Simple One Sync\uFF1A\u5F02\u5E38\u72B6\u6001\u5DF2\u9000\u51FA\uFF0C\u672C\u673A\u5185\u5BB9\u5DF2\u91CD\u65B0 Commit\uFF1B\u5408\u5E76\u51B2\u7A81\u5DF2\u4FDD\u7559\u5728\u540C\u6B65\u9762\u677F\u7B49\u5F85\u5904\u7406", 12e3);
         } else {
-          new import_obsidian3.Notice(`Simple Link\uFF1A\u5F02\u5E38\u4FEE\u590D\u672A\u5B8C\u6210\u3002${messageOf2(error)}`, 15e3);
+          new import_obsidian3.Notice(`Simple One Sync\uFF1A\u5F02\u5E38\u4FEE\u590D\u672A\u5B8C\u6210\u3002${messageOf2(error)}`, 15e3);
         }
       });
     });
@@ -3193,7 +3193,7 @@ var _SimpleSyncView = class _SimpleSyncView extends import_obsidian3.ItemView {
     return _SimpleSyncView.type;
   }
   getDisplayText() {
-    return "Simple Link";
+    return "Simple One Sync";
   }
   getIcon() {
     return "refresh-cw";
@@ -3504,13 +3504,13 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
       this.displaySetup(containerEl);
       return;
     }
-    this.addHeading(containerEl, "Simple Link");
+    this.addHeading(containerEl, "Simple One Sync");
     this.addEnableSetting(containerEl);
     if (!import_obsidian3.Platform.isMobile) this.addSetupEntry(containerEl);
     this.displayDesktop(containerEl);
   }
   addEnableSetting(parent) {
-    new import_obsidian3.Setting(parent).setName("\u542F\u7528 Simple Link").setDesc("\u663E\u793A\u53F3\u4FA7\u540C\u6B65\u9762\u677F\uFF0C\u5E76\u5141\u8BB8\u624B\u52A8\u6216\u5B9A\u65F6\u540C\u6B65\u3002\u5173\u95ED\u540E\u4FDD\u7559\u914D\u7F6E\uFF0C\u4F46\u505C\u6B62\u672C\u63D2\u4EF6\u7684\u540C\u6B65\u5DE5\u4F5C\u3002").addToggle(
+    new import_obsidian3.Setting(parent).setName("\u542F\u7528 Simple One Sync").setDesc("\u663E\u793A\u53F3\u4FA7\u540C\u6B65\u9762\u677F\uFF0C\u5E76\u5141\u8BB8\u624B\u52A8\u6216\u5B9A\u65F6\u540C\u6B65\u3002\u5173\u95ED\u540E\u4FDD\u7559\u914D\u7F6E\uFF0C\u4F46\u505C\u6B62\u672C\u63D2\u4EF6\u7684\u540C\u6B65\u5DE5\u4F5C\u3002").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.enabled).onChange(async (value) => {
         await this.plugin.setFeatureEnabled(value);
         this.display();
@@ -3658,7 +3658,7 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
       this.setupViewStep = this.plugin.settings.setupStep;
     } catch (error) {
       this.setupMessage = this.refreshingSetupDeviceCode ? "\u6B63\u5728\u5237\u65B0\u8BBE\u5907\u7801\u2026" : explainSetupError(error);
-      if (!this.refreshingSetupDeviceCode) new import_obsidian3.Notice(`Simple Link\uFF1A${this.setupMessage}`, 1e4);
+      if (!this.refreshingSetupDeviceCode) new import_obsidian3.Notice(`Simple One Sync\uFF1A${this.setupMessage}`, 1e4);
     } finally {
       this.setupBusy = false;
       this.setupLoginCancel = void 0;
@@ -4200,12 +4200,12 @@ var SimpleSyncSettingTab = class extends import_obsidian3.PluginSettingTab {
         try {
           const operation = await this.plugin.getInterruptedGitOperationLabel();
           if (!operation) {
-            new import_obsidian3.Notice("Simple Link\uFF1A\u6CA1\u6709\u68C0\u6D4B\u5230\u672A\u5B8C\u6210\u7684 Rebase\u3001Merge\u3001Cherry-pick \u6216 Revert");
+            new import_obsidian3.Notice("Simple One Sync\uFF1A\u6CA1\u6709\u68C0\u6D4B\u5230\u672A\u5B8C\u6210\u7684 Rebase\u3001Merge\u3001Cherry-pick \u6216 Revert");
             return;
           }
           new GitRepairModal(this.app, this.plugin, operation).open();
         } catch (error) {
-          new import_obsidian3.Notice(`Simple Link\uFF1A\u65E0\u6CD5\u68C0\u67E5 Git \u72B6\u6001\u3002${messageOf2(error)}`, 1e4);
+          new import_obsidian3.Notice(`Simple One Sync\uFF1A\u65E0\u6CD5\u68C0\u67E5 Git \u72B6\u6001\u3002${messageOf2(error)}`, 1e4);
         } finally {
           button.setDisabled(false);
           button.setButtonText("\u6062\u590D\u6B63\u5E38\u540C\u6B65");
