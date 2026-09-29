@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import esbuild from "esbuild";
 
 const require = createRequire(import.meta.url);
-const folder = await mkdtemp(join(tmpdir(), "simple-sync-test-"));
+const folder = await mkdtemp(join(tmpdir(), "zoey-onboarding-test-"));
 let githubFixtureRemote = "";
 const run = (cwd, args) => execFileSync("git", args.map((arg) =>
   args[0] === "fetch" && arg === "https://github.com/example/vault.git" && githubFixtureRemote ? githubFixtureRemote : arg
@@ -15,19 +15,7 @@ const run = (cwd, args) => execFileSync("git", args.map((arg) =>
 
 try {
   const bundle = join(folder, "onboarding.cjs");
-  await esbuild.build({
-    entryPoints: ["src/onboarding.ts"], bundle: true, platform: "node", format: "cjs", outfile: bundle,
-    plugins: [{
-      name: "obsidian-test-stub",
-      setup(build) {
-        build.onResolve({ filter: /^obsidian$/ }, () => ({ path: "obsidian", namespace: "test-stub" }));
-        build.onLoad({ filter: /.*/, namespace: "test-stub" }, () => ({
-          contents: "exports.requestUrl = async () => { throw new Error('requestUrl should not be used in this test'); };",
-          loader: "js"
-        }));
-      }
-    }]
-  });
+  await esbuild.build({ entryPoints: ["src/onboarding.ts"], bundle: true, platform: "node", format: "cjs", outfile: bundle });
   globalThis.require = require;
   const { GitSetup, parseGithubRepoUrl, explainSetupError, missingSetupIgnoreRules } = require(bundle);
   assert.equal(parseGithubRepoUrl("https://github.com/example/vault.git").name, "vault");
@@ -48,7 +36,17 @@ try {
   await authSetup.login((code) => { deviceCode = code; });
   assert.equal(deviceCode, "ABCD-1234");
   assert(authCalls.some((call) => call.includes("auth login") && call.includes("--web") && call.includes("--clipboard")));
-  assert(authCalls.some((call) => call.includes("auth setup-git --hostname github.com")));
+  assert(!authCalls.some((call) => call.includes("auth setup-git")));
+  const createCalls = [];
+  const createSetup = new GitSetup(folder, async (program, args) => {
+    createCalls.push([program, ...args]);
+    if (args[0] === "api" && args[1] === "user") return "example";
+    return "ok";
+  });
+  assert.equal(await createSetup.createRepository("my-vault"), "https://github.com/example/my-vault.git");
+  assert(createCalls.some((call) => call.join(" ") === "gh repo create example/my-vault --private"));
+  assert(!createCalls.some((call) => call.includes("--push") || call.includes("--source")));
+  await assert.rejects(createSetup.createRepository("invalid/name"), /仓库名称/);
 
   const bare = join(folder, "remote.git");
   githubFixtureRemote = bare;
@@ -114,9 +112,10 @@ try {
   assert.equal((await readFile(join(vault, "remote.md"), "utf8")).trim(), "remote only");
   const connectedIgnore = await readFile(join(vault, ".gitignore"), "utf8");
   assert(connectedIgnore.startsWith(originalIgnore));
-  assert.match(connectedIgnore, /\.obsidian\/plugins\/simple-sync\/data\.json/);
-  assert.equal(connectedIgnore.split(".obsidian/plugins/simple-sync/data.json").length, 2);
-  assert.equal(connectedIgnore.split(".obsidian/plugins/simple-link/data.json").length, 2);
+  assert.match(connectedIgnore, /\.obsidian\/plugins\/zoey-sync-test\/data\.json/);
+  assert.equal(connectedIgnore.split(".obsidian/plugins/zoey-sync-test/data.json").length, 2);
+  assert.match(connectedIgnore, /\.obsidian\/plugins\/simple-one-sync\/data\.json/);
+  assert.equal(connectedIgnore.split(".obsidian/plugins/simple-one-sync/data.json").length, 2);
   assert(!connectedIgnore.includes(".smart-env/"));
   assert(!connectedIgnore.includes("remote-only/"));
   assert.equal(run(vault, ["status", "--porcelain"]), "");
@@ -220,7 +219,71 @@ try {
   const nestedVault = join(vault, "nested");
   await mkdir(nestedVault);
   run(nestedVault, ["init"]);
-  await assert.rejects(() => setup.preview(linkedRepo), /另一个 Git 仓库/);
+  await writeFile(join(nestedVault, "main.js"), "nested plugin\n");
+  run(nestedVault, ["add", "main.js"]);
+  run(nestedVault, ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "nested plugin"]);
+  const nestedPreview = await setup.preview(linkedRepo);
+  assert(nestedPreview.localFiles.includes("nested/main.js"));
+  assert(!/\/nested\/\.git\//.test(await readFile(join(vault, ".gitignore"), "utf8")));
+  assert(nestedPreview.missingIgnoreRules.includes("/nested/.git/"));
+  assert.equal(run(vault, ["ls-files", "--stage", "nested/main.js"]), "");
+  assert(!nestedPreview.localFiles.some((name) => name.includes("/.git/")));
+
+  const nestedBundle = join(folder, "nested.cjs");
+  await esbuild.build({ entryPoints: ["src/nestedRepos.ts"], bundle: true, platform: "node", format: "cjs", outfile: nestedBundle });
+  const { findNestedRepos, rebuildNestedRepoTracking } = require(nestedBundle);
+  const gitlinkVault = join(folder, "gitlink-vault");
+  const gitlinkChild = join(gitlinkVault, "plugin");
+  await mkdir(gitlinkChild, { recursive: true });
+  run(gitlinkVault, ["init", "-b", "main"]);
+  run(gitlinkChild, ["init"]);
+  await writeFile(join(gitlinkChild, ".gitignore"), "data.json\n");
+  await writeFile(join(gitlinkChild, "main.js"), "child code\n");
+  await writeFile(join(gitlinkChild, "data.json"), "private settings\n");
+  run(gitlinkChild, ["add", "main.js"]);
+  run(gitlinkChild, ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "child"]);
+  await writeFile(join(gitlinkVault, ".gitignore"), "/plugin/.git/\n");
+  await writeFile(join(gitlinkVault, "unrelated.md"), "keep staged\n");
+  run(gitlinkVault, ["add", "-A"]);
+  assert.match(run(gitlinkVault, ["ls-files", "--stage", "plugin"]), /^160000 /);
+  const gitlinkRepos = await findNestedRepos(gitlinkVault);
+  assert.equal(await rebuildNestedRepoTracking(gitlinkVault, gitlinkRepos, (args) => Promise.resolve(run(gitlinkVault, args))), 2);
+  assert.match(run(gitlinkVault, ["ls-files", "--stage", "plugin/main.js"]), /^100644 /);
+  assert(!run(gitlinkVault, ["ls-files", "--stage", "plugin"]).includes("160000 "));
+  assert.match(run(gitlinkVault, ["diff", "--cached", "--name-only"]), /unrelated\.md/);
+
+  const deferredBare = join(folder, "deferred.git");
+  const deferredVault = join(folder, "deferred-vault");
+  const deferredChild = join(deferredVault, "plugin");
+  await mkdir(deferredChild, { recursive: true });
+  run(folder, ["init", "--bare", deferredBare]);
+  run(deferredVault, ["init", "-b", "main"]);
+  run(deferredChild, ["init"]);
+  await writeFile(join(deferredChild, "main.js"), "deferred plugin\n");
+  run(deferredChild, ["add", "main.js"]);
+  run(deferredChild, ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "child"]);
+  await writeFile(join(deferredVault, "note.md"), "vault note\n");
+  run(deferredVault, ["add", "-A"]);
+  run(deferredVault, ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "parent"]);
+  const deferredCommand = async (program, args) => {
+    if (program === "gh") {
+      if (args[0] === "auth") return "logged in";
+      if (args[0] === "repo") return JSON.stringify({ isPrivate: true, viewerPermission: "ADMIN", defaultBranchRef: null });
+      throw new Error(`Unexpected gh ${args.join(" ")}`);
+    }
+    if (args[0] === "remote" && args[1] === "add") return run(deferredVault, ["remote", "add", "origin", deferredBare]);
+    return run(deferredVault, args);
+  };
+  const deferredSetup = new GitSetup(deferredVault, deferredCommand);
+  const deferredRepo = await deferredSetup.verifyRepository("https://github.com/example/deferred.git");
+  const deferredPreview = await deferredSetup.preview(deferredRepo);
+  assert(deferredPreview.missingIgnoreRules.includes("/plugin/.git/"));
+  assert.match(run(deferredVault, ["ls-files", "--stage", "plugin"]), /^160000 /);
+  await assert.rejects(readFile(join(deferredVault, ".gitignore"), "utf8"), /ENOENT/);
+  await deferredSetup.finish(deferredRepo, deferredPreview, {}, { name: "Test", email: "test@example.com" });
+  assert.match(run(deferredVault, ["ls-tree", "-r", "HEAD", "--", "plugin/main.js"]), /^100644 blob /);
+  assert(!run(deferredVault, ["ls-tree", "HEAD", "--", "plugin"]).includes("160000"));
+  assert.match(await readFile(join(deferredVault, ".gitignore"), "utf8"), /\/plugin\/\.git\//);
 
   const emptyBare = join(folder, "empty.git");
   const freshVault = join(folder, "fresh-vault");
@@ -230,6 +293,14 @@ try {
   await mkdir(join(freshVault, ".obsidian", "plugins", "editing-plugin"), { recursive: true });
   await writeFile(join(freshVault, ".obsidian", "plugins", "editing-plugin", "main.js"), "work in progress\n");
   await writeFile(join(freshVault, ".obsidian", "plugins", "editing-plugin", "manifest.json"), "work in progress\n");
+  const innerPlugin = join(freshVault, ".obsidian", "plugins", "own-plugin");
+  await mkdir(innerPlugin);
+  run(innerPlugin, ["init"]);
+  await writeFile(join(innerPlugin, ".gitignore"), "data.json\n");
+  await writeFile(join(innerPlugin, "main.js"), "independent plugin\n");
+  await writeFile(join(innerPlugin, "data.json"), "user data\n");
+  run(innerPlugin, ["add", "-A"]);
+  run(innerPlugin, ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "independent plugin"]);
   const freshCommand = async (program, args) => {
     if (program === "gh") {
       if (args[0] === "auth") return "logged in";
@@ -244,6 +315,8 @@ try {
   const freshPreview = await freshSetup.preview(freshRepo);
   assert.equal(freshPreview.localRoot, null);
   assert.deepEqual(freshPreview.overlaps, []);
+  assert(freshPreview.localFiles.includes(".obsidian/plugins/own-plugin/main.js"));
+  assert(freshPreview.localFiles.includes(".obsidian/plugins/own-plugin/data.json"));
   await writeFile(join(freshVault, ".obsidian", "plugins", "editing-plugin", "main.js"), "new work in progress\n");
   await writeFile(join(freshVault, ".obsidian", "plugins", "editing-plugin", "new.js"), "new plugin file\n");
   const freshSkipped = await freshSetup.finish(freshRepo, freshPreview, {}, { name: "Test", email: "test@example.com" }, undefined,
@@ -253,6 +326,13 @@ try {
   assert(freshSkipped.includes(".obsidian/plugins/editing-plugin/new.js"));
   assert.equal(run(freshVault, ["show", "HEAD:first.md"]), "first note");
   assert.equal(run(freshVault, ["ls-files", ".obsidian/plugins/editing-plugin/main.js"]), "");
+  assert.match(run(freshVault, ["ls-files", "--stage", ".obsidian/plugins/own-plugin/main.js"]), /^100644 /);
+  assert.equal(run(freshVault, ["show", "HEAD:.obsidian/plugins/own-plugin/data.json"]), "user data");
+  assert.match(await readFile(join(freshVault, ".gitignore"), "utf8"), /\/\.obsidian\/plugins\/own-plugin\/\.git\//);
+  assert.equal(run(freshVault, ["ls-files", ".obsidian/plugins/own-plugin/.git/config"]), "");
+  await writeFile(join(innerPlugin, "new.js"), "later plugin update\n");
+  run(freshVault, ["add", "-A"]);
+  assert.match(run(freshVault, ["ls-files", "--stage", ".obsidian/plugins/own-plugin/new.js"]), /^100644 /);
   assert.equal(await readFile(join(freshVault, ".obsidian", "plugins", "editing-plugin", "main.js"), "utf8"), "new work in progress\n");
   assert.equal(run(freshVault, ["rev-parse", "HEAD"]), run(folder, ["--git-dir", emptyBare, "rev-parse", "refs/heads/main"]));
 
@@ -277,9 +357,10 @@ try {
   const adoptedIgnore = await readFile(join(unversionedVault, ".gitignore"), "utf8");
   assert(adoptedIgnore.startsWith(originalIgnore));
   assert(!adoptedIgnore.includes("local-unused/"));
-  assert.match(adoptedIgnore, /\.obsidian\/plugins\/simple-sync\/data\.json/);
-  assert.equal(adoptedIgnore.split(".obsidian/plugins/simple-sync/data.json").length, 2);
-  assert.equal(adoptedIgnore.split(".obsidian/plugins/simple-link/data.json").length, 2);
+  assert.match(adoptedIgnore, /\.obsidian\/plugins\/zoey-sync-test\/data\.json/);
+  assert.equal(adoptedIgnore.split(".obsidian/plugins/zoey-sync-test/data.json").length, 2);
+  assert.match(adoptedIgnore, /\.obsidian\/plugins\/simple-one-sync\/data\.json/);
+  assert.equal(adoptedIgnore.split(".obsidian/plugins/simple-one-sync/data.json").length, 2);
   assert.equal(run(unversionedVault, ["rev-parse", "HEAD"]), run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]));
   sha = run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]);
   const collisionVault = join(folder, "collision-vault");

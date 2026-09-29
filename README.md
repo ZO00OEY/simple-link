@@ -1,95 +1,41 @@
 # Simple Link
 
-**Simple Link** synchronizes an Obsidian vault across devices using Git on desktop and a compatible sync server on mobile.
+这是与 `simple-one` 分离的跨设备同步插件。插件 ID 为 `simple-link`，显示名称为 Simple Link。原本机版 `simple-one-sync` 的界面与同步内核已迁入此插件。
 
-**Simple Link** lets you synchronize an Obsidian vault across devices. It uses Git on desktop and a compatible sync server on mobile.
+## 平台行为
 
-## Features
+- iPhone / Android：填写 Zoey Notes Server 地址与认证密码，插件记录文件变更并与服务器同步，同时轮询并展示服务器指令。
+- Windows / macOS / Linux：填写 Git Remote、分支和 Git Author，直接使用本机 Git 与 GitHub 同步。
+- 桌面认证默认让单次 Git 命令调用已登录的 GitHub CLI 取凭据，不改系统 Git 配置；也可使用 Author 认证 Key / Personal Access Token。
+- 私有 Git 仓库的 Fetch/Push 都需要有效凭据，不能在未登录时匿名拉取。GitHub 凭据检查的“Token 无效”提示也可能来自暂时无法访问网络或系统钥匙串；插件会先重试，并在日志中保留原始错误供排查。
 
-- **Desktop Git sync:** review local changes, create commits, fetch and push to a GitHub repository, and resolve merge conflicts.
-- **Setup wizard:** check the local vault and remote repository before the first push. Choose how to handle conflicting files and optionally rebuild Git tracking from `.gitignore` rules.
-- **Mobile sync:** send and receive vault changes through a compatible Simple Link API v1 server.
-- **Privacy controls:** credentials and device state are stored in Obsidian's local plugin data. The project does not include personal connection settings or credentials.
+## 当前安全边界
 
-## Requirements
+- 服务器公网地址必须是 HTTPS；只有 localhost 允许 HTTP。
+- 私密 Vault 仓库可以追踪 `.obsidian/plugins/simple-link/data.json`；公开插件仓库及发布包不包含此文件。
+- 可跨设备同步的非敏感设置单独保存在 `sync-settings.json`；Token、密码、设备状态、界面状态和日志保存在私密 Vault 的 `data.json`。
+- Token 不会被拼进 Git Remote URL，只传给单次 Git 子进程。
+- 服务器下发指令只支持提示、触发同步和打开 Vault 内文件，不执行任意 Shell 命令。
 
-- **Desktop:** Git installed on the computer. GitHub CLI is optional; you can also provide a GitHub token. The setup wizard currently verifies GitHub repositories.
-- **Mobile:** a separately hosted server that implements the Simple Link API v1. The server is not included in this repository. Use HTTPS for public servers; HTTP is accepted only for localhost.
-- **Obsidian:** version 1.7.2 or newer.
+## 异常修复
 
-## Install
+「设备同步」按当前平台在对应入口右侧显示「系统识别 · 当前设备」标记，并禁用其他平台入口。电脑端的「电脑端 Git 同步」分为「接入引导」和「高级设置」两个标签页；高级设置首行提示「通常不需要修改」，同步操作位于插件的同步面板。向导按四步接入私人 GitHub 仓库：安装与授权、选择仓库、检查本地与远端、完成接入并首次推送。Gitee 目前只显示未兼容提示。第 3 步会比较两端文件和 Git 历史；需要时只获取提交对象，不修改工作文件。已有 `.gitignore` 会逐条补充缺失的建议规则。
 
-Install **Simple Link** from **Settings → Community plugins → Browse**. You can also install it manually by placing `main.js`, `manifest.json`, and `styles.css` in `.obsidian/plugins/simple-link/` and enabling it in Obsidian.
+如果现有或待补的忽略规则命中仍被 Git 跟踪的文件，第 3 步列出清单并要求选择保留追踪或重建追踪；没有命中项时仍可主动选择重建，作为纠错兜底。重建需在第 4 步再次确认：先用 `git rm -r -f --cached` 取消整个索引的追踪，再按最终 `.gitignore` 用 `git add -A` 重新逐文件加入，最后跳过正在编辑的插件改动并核验没有被忽略文件留在索引中。本机文件保留；推送后被忽略文件从远端当前版本移除，旧提交历史仍保留。进入向导期间自动 Git 操作暂停。
 
-## First-time setup
+高级设置的“故障排查”中提供“异常修复”。它处理未完成的 Rebase、Merge、Cherry-pick 或 Revert：保护并恢复当前本机内容，退出异常操作，重新建立本地 Commit，然后 Fetch 并 Merge 云端版本；如有内容冲突，交给右侧冲突面板选择。修复不会立即 Push。内部临时备份会在成功恢复后自动清理；如果恢复失败，则保留备份并暂停自动 Git 操作。
 
-1. Install Git on desktop and connect a GitHub account with permission to access the target repository.
-2. Select or create a private GitHub repository in Simple Link's desktop setup guide.
-3. Review the local and remote file summary and resolve any same-name file choices.
-4. Confirm the author name and email used in Git commits, then complete the first push.
-5. On mobile, enter the URL and password for your compatible Simple Link API v1 server.
+Merge 冲突不会因为关闭右侧面板而取消或回滚。关闭只会暂时收起处理界面，已能合并的内容和剩余冲突都会保留；同步面板持续显示“合并冲突等待处理”，直到用户点击“继续处理”并完成全部冲突。等待期间自动 Commit、Merge 和 Push 会暂停。
 
-Git tracking rebuild uses the final `.gitignore` rules to reset the current index. Files that become ignored stop being tracked in the new commit, but this does **not** erase them from older Git history. Back up your repository before choosing this option if you are unsure.
+桌面端 Fetch/Merge 失败后按设置的自动检查间隔再次运行；Push 失败后 5 分钟重试。待人工处理的 Git 冲突不会盲目重试。重启插件时会分别检查未 Commit 文件和领先远端的未 Push Commit，并恢复各自的计时。每次成功的 Fetch 检查和 Push 都写入日志，包括没有新提交或无需上传的情况。成功和失败记录都可展开，对比使用的凭据路径、`fetch`、`merge`、`push` 步骤及耗时；正常同步不再先执行一次 `ls-remote`。旧日志不会补出当时未保存的步骤。日志保留最近 24 小时，最多 500 条。
 
-## Privacy and data handling
+自动 Commit 只负责本地快照；自动 Push 的一小时上限从最早待上传 Commit 开始计时。自动 Push 到点时会先 Commit 当前可安全提交的更改，跳过仍在编辑的文件及其插件目录，再 Fetch、按需 Merge 并 Push；Push 失败后的重试也会重新检查待 Commit 文件。跳过的文件停止修改后留待下一轮提交。
 
-- Simple Link does not bundle a server URL, repository URL, account email, access token, or personal vault settings.
-- On desktop, files selected by your Git tracking rules are committed to and synchronized with the Git remote you configure.
-- On mobile, changed vault file content and paths are sent to the server URL you configure. Only connect to a server you trust.
-- GitHub authorization tokens, server passwords, device identifiers, and local sync state are kept in Obsidian's local plugin data and are not included in this repository.
-- The plugin does not contain a third-party analytics endpoint.
+## 构建
 
-## Build and test
-
-```sh
+```powershell
 npm install
 npm run build
-npm test
 ```
 
-## 中文说明
-
-Simple Link 用于在多台设备间同步 Obsidian Vault：电脑端通过 Git 同步，手机端连接兼容的同步服务器。
-
-### 功能
-
-- **电脑端 Git 同步：**查看本地改动、创建提交、与 GitHub 仓库 Fetch/Push，并处理合并冲突。
-- **接入向导：**首次推送前检查本地与远端仓库，选择同名文件的处理方式；还可按 `.gitignore` 规则重建 Git 追踪。
-- **手机端同步：**通过兼容 Simple Link API v1 的服务器收发 Vault 改动。
-- **隐私设置：**凭据和设备状态保存在 Obsidian 本机插件数据中；本仓库不包含个人连接设置或凭据。
-
-### 使用要求
-
-- **电脑端：**需要在电脑上安装 Git。GitHub CLI 是可选项，也可以填写 GitHub Token。当前接入向导会核验 GitHub 仓库。
-- **手机端：**需要自行部署兼容 Simple Link API v1 的服务器。本仓库不包含服务器程序。公网服务器须使用 HTTPS；仅 localhost 可使用 HTTP。
-- **Obsidian：**版本 1.7.2 或更高。
-
-### 安装
-
-可在 **设置 → 第三方插件 → 浏览** 中搜索并安装 **Simple Link**。也可手动将 `main.js`、`manifest.json` 和 `styles.css` 放入 `.obsidian/plugins/simple-link/`，然后在 Obsidian 中启用。
-
-### 首次设置
-
-1. 在电脑上安装 Git，并授权一个有目标仓库访问权限的 GitHub 账号。
-2. 在 Simple Link 的电脑端接入向导中选择或创建私人 GitHub 仓库。
-3. 检查本地与远端文件摘要，并处理同名文件。
-4. 确认 Git 提交使用的作者名称和邮箱，然后完成首次推送。
-5. 在手机端填写兼容 Simple Link API v1 服务器的地址和密码。
-
-按 `.gitignore` 重建追踪会依据最终规则重置当前 Git 索引。新提交中，被忽略的文件将停止追踪，但**不会从较早的 Git 历史记录中删除**。不确定时，请先备份仓库。
-
-### 隐私与数据处理
-
-- Simple Link 不附带服务器地址、仓库地址、账号邮箱、访问 Token 或个人 Vault 设置。
-- 电脑端会把 Git 追踪规则选中的文件提交并同步到你配置的 Git 远端。
-- 手机端会把发生变化的 Vault 文件内容和路径发送到你配置的服务器。请只连接你信任的服务器。
-- GitHub 授权 Token、服务器密码、设备标识和本地同步状态保存在 Obsidian 本机插件数据中，不包含在本仓库里。
-- 插件不包含第三方分析服务地址。
-
-### 构建与测试
-
-```sh
-npm install
-npm run build
-npm test
-```
+构建通过后，可在 Obsidian 社区插件中启用 `Simple Link`。涉及界面和真实同步的最终确认，需要在 Obsidian 与手机上实际验证。

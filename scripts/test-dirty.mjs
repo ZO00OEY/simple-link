@@ -53,8 +53,8 @@ assert.deepEqual(
   }),
   [{ type: "move", fromPath: "old.md", path: "new.md" }]
 );
-assert.equal(module.shouldIgnore(".obsidian/plugins/simple-sync/data.json"), true);
-assert.equal(module.shouldIgnore(".obsidian/plugins/simple-link/data.json"), true);
+assert.equal(module.shouldIgnore(".obsidian/plugins/zoey-sync-test/data.json"), true);
+assert.equal(module.shouldIgnore(".obsidian/plugins/simple-one-sync/data.json"), true);
 assert.equal(module.shouldIgnore(".obsidian/cache/index.json"), true);
 assert.equal(module.shouldIgnore("folder/draft.tmp"), true);
 assert.equal(module.shouldIgnore("folder/node_modules/package/index.js"), true);
@@ -124,7 +124,7 @@ assert.equal(
   gitError.describeGitError("fatal: unable to access repository: schannel: SSL/TLS connection failed"),
   "与 GitHub 网络连接失败：fatal: unable to access repository: schannel: SSL/TLS connection failed"
 );
-const uncertainAuth = "X Failed to log in to github.com account sample-user (keyring)\n- The token in keyring is invalid.";
+const uncertainAuth = "X Failed to log in to github.com account ZO00OEY (keyring)\n- The token in keyring is invalid.";
 assert.equal(gitError.isUncertainGitAuthError(uncertainAuth), true);
 assert.match(gitError.describeGitError(uncertainAuth), /^GitHub 认证状态检查失败（暂不能确认 Token 已失效/);
 assert.equal(gitError.isUncertainGitAuthError("remote: Invalid username or password."), false);
