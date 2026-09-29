@@ -506,7 +506,7 @@ export class GitSetup {
     if (!missing.length) return;
     const eol = existing.includes("\r\n") ? "\r\n" : "\n";
     const separator = existing ? `${existing.endsWith("\n") ? "" : eol}${eol}` : "";
-    await nodeFs!.writeFile(file, `${existing}${separator}# Simple One Sneak recommended local exclusions${eol}${missing.join(eol)}${eol}`, "utf8");
+    await nodeFs!.writeFile(file, `${existing}${separator}# Simple One Sync recommended local exclusions${eol}${missing.join(eol)}${eol}`, "utf8");
   }
 
   private async rebuildTrackingIndex(paths: string[], skipped: ReadonlySet<string>): Promise<void> {
@@ -629,7 +629,7 @@ export class GitSetup {
     try {
       await this.run("git", ["diff", "--cached", "--quiet"]);
     } catch {
-      await this.run("git", ["commit", "-m", "Simple One Sneak initial vault snapshot"]);
+      await this.run("git", ["commit", "-m", "Simple One Sync initial vault snapshot"]);
     }
     if (repo.remoteSha) {
       await this.run("git", ["fetch", "origin", repo.branch]);
@@ -662,7 +662,7 @@ export class GitSetup {
           }
           if (rebuildTracking) await this.rebuildTrackingIndex(
             [...new Set([...latest.trackedExcludedLocal, ...latest.trackedExcludedRemote])], skipped);
-          await this.run("git", ["commit", "-m", "Simple One Sneak connect local and remote notes"]);
+          await this.run("git", ["commit", "-m", "Simple One Sync connect local and remote notes"]);
         } catch (error) {
           try { await this.run("git", ["merge", "--abort"]); } catch { /* keep Git's diagnostics */ }
           throw error;

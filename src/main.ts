@@ -335,7 +335,7 @@ export default class SimpleSyncPlugin extends Plugin {
     if (this.featureActive) return;
     this.featureActive = true;
     if (this.statusEl) this.statusEl.hidden = false;
-    this.ribbonEl = this.addRibbonIcon("refresh-cw", "打开 Simple One Sneak", () => void this.openSyncView());
+    this.ribbonEl = this.addRibbonIcon("refresh-cw", "打开 Simple One Sync", () => void this.openSyncView());
     this.registerViewRefreshEvents();
     if (Platform.isMobile) {
       this.registerMobileEvents();
@@ -507,8 +507,8 @@ export default class SimpleSyncPlugin extends Plugin {
       return pickSharedSettings(parsed);
     } catch (error) {
       this.sharedSettingsWritable = false;
-      console.error("Simple One Sneak shared settings", error);
-      new Notice("Simple One Sneak：同步配置文件存在冲突或格式错误，已停止覆盖该文件", 10000);
+      console.error("Simple One Sync shared settings", error);
+      new Notice("Simple One Sync：同步配置文件存在冲突或格式错误，已停止覆盖该文件", 10000);
       return null;
     }
   }
@@ -550,7 +550,7 @@ export default class SimpleSyncPlugin extends Plugin {
       this.settings.errorLogs = this.settings.errorLogs.slice(-MAX_ERROR_LOGS);
       await this.saveSettings();
     } catch (saveError) {
-      console.error("Simple One Sneak error log", saveError);
+      console.error("Simple One Sync error log", saveError);
     }
   }
 
@@ -575,7 +575,7 @@ export default class SimpleSyncPlugin extends Plugin {
   }
 
   private setStatus(text: string): void {
-    if (this.statusEl) this.statusEl.setText(`Simple One Sneak: ${text}`);
+    if (this.statusEl) this.statusEl.setText(`Simple One Sync: ${text}`);
   }
 
   private setSyncActivity(text: string, tone: ViewStatusTone): void {
@@ -767,7 +767,7 @@ export default class SimpleSyncPlugin extends Plugin {
         await this.refreshSyncView();
         return;
       }
-      console.error("Simple One Sneak desktop task", error);
+      console.error("Simple One Sync desktop task", error);
       if (errorContext) {
         await this.recordError(errorContext, [...this.desktopGitTrace, describeGitError(error)].join("\n"));
         if (errorContext.includes("Push") || errorContext.includes("同步")) {
@@ -930,7 +930,7 @@ export default class SimpleSyncPlugin extends Plugin {
       const hadChanges = await this.hasDesktopChanges();
       let recoveryStash = "";
       if (hadChanges) {
-        const message = `Simple One Sneak repair backup ${new Date().toISOString()}`;
+        const message = `Simple One Sync repair backup ${new Date().toISOString()}`;
         await this.git(["stash", "push", "--include-untracked", "-m", message]);
         recoveryStash = (await this.git(["stash", "list", "-1", "--format=%gd"])).trim();
         if (!recoveryStash) throw new Error("无法建立本机修改的恢复备份，已停止修复");
@@ -1028,7 +1028,7 @@ export default class SimpleSyncPlugin extends Plugin {
 
   async openSyncView(refreshExisting = true): Promise<void> {
     if (!this.settings.enabled) {
-      new Notice("Simple One Sneak 已关闭，请先在设置中启用");
+      new Notice("Simple One Sync 已关闭，请先在设置中启用");
       return;
     }
     let leaf: WorkspaceLeaf | null = this.app.workspace.getLeavesOfType(SimpleSyncView.type)[0] ?? null;
@@ -1243,10 +1243,10 @@ export default class SimpleSyncPlugin extends Plugin {
         if (!this.settings.setupComplete) throw new Error("请先完成首次使用引导");
         await this.testDesktopGit();
       }
-      if (showNotice) new Notice(`Simple One Sneak：${Platform.isMobile ? "服务器" : "Git"}连接正常`);
+      if (showNotice) new Notice(`Simple One Sync：${Platform.isMobile ? "服务器" : "Git"}连接正常`);
     } catch (error) {
       await this.recordError("测试连接", error);
-      if (showNotice) new Notice(`Simple One Sneak：${messageOf(error)}`, 8000);
+      if (showNotice) new Notice(`Simple One Sync：${messageOf(error)}`, 8000);
       throw error;
     }
   }
@@ -1257,11 +1257,11 @@ export default class SimpleSyncPlugin extends Plugin {
       return;
     }
     if (!this.settings.enabled) {
-      if (showNotice) new Notice("Simple One Sneak 已关闭，请先在设置中启用");
+      if (showNotice) new Notice("Simple One Sync 已关闭，请先在设置中启用");
       return;
     }
     if (this.syncing) {
-      if (showNotice) new Notice("Simple One Sneak：已有同步任务正在运行");
+      if (showNotice) new Notice("Simple One Sync：已有同步任务正在运行");
       return;
     }
     this.syncing = true;
@@ -1277,7 +1277,7 @@ export default class SimpleSyncPlugin extends Plugin {
         this.setStatus("同步检查完成");
       }
       await this.recordSuccess(showNotice ? "手动同步" : "自动同步", "同步检查完成");
-      if (showNotice) new Notice("Simple One Sneak：同步完成");
+      if (showNotice) new Notice("Simple One Sync：同步完成");
     } catch (error) {
       if (error instanceof SyncDeferredError) {
         this.setStatus(error.message);
@@ -1287,8 +1287,8 @@ export default class SimpleSyncPlugin extends Plugin {
       if (!Platform.isMobile) await this.scheduleDesktopPushRetry();
       await this.recordError(showNotice ? "手动同步" : "自动同步", error);
       this.setStatus(Platform.isMobile ? "同步失败" : "同步失败 · 5 分钟后重试");
-      if (showNotice) new Notice(`Simple One Sneak：${messageOf(error)}`, 10000);
-      else console.error("Simple One Sneak", error);
+      if (showNotice) new Notice(`Simple One Sync：${messageOf(error)}`, 10000);
+      else console.error("Simple One Sync", error);
     } finally {
       this.syncing = false;
       await this.refreshSyncView();
@@ -1301,7 +1301,7 @@ export default class SimpleSyncPlugin extends Plugin {
       return;
     }
     if (!this.settings.enabled) {
-      if (showNotice) new Notice("Simple One Sneak 已关闭，请先在设置中启用");
+      if (showNotice) new Notice("Simple One Sync 已关闭，请先在设置中启用");
       return;
     }
     if (Platform.isMobile) {
@@ -1309,7 +1309,7 @@ export default class SimpleSyncPlugin extends Plugin {
       return;
     }
     if (this.syncing) {
-      if (showNotice) new Notice("Simple One Sneak：已有任务正在运行");
+      if (showNotice) new Notice("Simple One Sync：已有任务正在运行");
       return;
     }
     this.syncing = true;
@@ -1325,13 +1325,13 @@ export default class SimpleSyncPlugin extends Plugin {
       this.setStatus(result.committed ? `已 Commit${skippedText}` : `没有可 Commit 文件${skippedText}`);
       if (showNotice) {
         new Notice(
-          result.committed ? `Simple One Sneak：Commit 完成${skippedText}` : `Simple One Sneak：没有可 Commit 文件${skippedText}`
+          result.committed ? `Simple One Sync：Commit 完成${skippedText}` : `Simple One Sync：没有可 Commit 文件${skippedText}`
         );
       }
     } catch (error) {
       await this.recordError("手动 Commit", error);
       this.setStatus("Commit 失败");
-      if (showNotice) new Notice(`Simple One Sneak：${messageOf(error)}`, 10000);
+      if (showNotice) new Notice(`Simple One Sync：${messageOf(error)}`, 10000);
     } finally {
       this.syncing = false;
       await this.refreshSyncView();
@@ -1399,7 +1399,7 @@ export default class SimpleSyncPlugin extends Plugin {
     this.settings.pendingRequestId = "";
     await this.saveSettings();
     const triggerSync = await this.handleCommands(response.commands ?? []);
-    if (response.gitWarning) new Notice(`Simple One Sneak：GitHub 暂时不可用，本地服务器同步已完成`, 7000);
+    if (response.gitWarning) new Notice(`Simple One Sync：GitHub 暂时不可用，本地服务器同步已完成`, 7000);
     if (triggerSync) window.setTimeout(() => void this.syncNow(false), 250);
   }
 
@@ -1443,7 +1443,7 @@ export default class SimpleSyncPlugin extends Plugin {
       const triggerSync = await this.handleCommands(result.commands);
       if (triggerSync) void this.syncNow(false);
     } catch (error) {
-      console.error("Simple One Sneak command poll", error);
+      console.error("Simple One Sync command poll", error);
       await this.recordError("指令检查", error);
     }
   }
@@ -1467,7 +1467,7 @@ export default class SimpleSyncPlugin extends Plugin {
         }
         acknowledged.push(command.id);
       } catch (error) {
-        new Notice(`Simple One Sneak 指令失败：${messageOf(error)}`, 8000);
+        new Notice(`Simple One Sync 指令失败：${messageOf(error)}`, 8000);
       }
     }
     if (acknowledged.length) {
@@ -2005,7 +2005,7 @@ export default class SimpleSyncPlugin extends Plugin {
     } catch (error) {
       if (error instanceof SyncDeferredError) return;
       if (this.settings.pendingMergePushAfterResolve) await this.scheduleDesktopPushRetry();
-      new Notice(`Simple One Sneak：无法继续处理冲突。${messageOf(error)}`, 12000);
+      new Notice(`Simple One Sync：无法继续处理冲突。${messageOf(error)}`, 12000);
     }
   }
 
@@ -2088,12 +2088,12 @@ class GitRepairModal extends Modal {
       if (this.repairing) return;
       this.repairing = true;
       this.close();
-      new Notice("Simple One Sneak：正在恢复本机版本并检查云端更新…", 8000);
+      new Notice("Simple One Sync：正在恢复本机版本并检查云端更新…", 8000);
       void this.plugin
         .repairInterruptedGitOperation()
         .then((result) => {
           new Notice(
-            `Simple One Sneak：${result.operation} 异常状态已退出${
+            `Simple One Sync：${result.operation} 异常状态已退出${
               result.restoredLocalChanges ? "，本机修改已恢复" : ""
             }；本地 Commit 和云端合并检查已完成，尚未立即 Push`,
             10000
@@ -2101,9 +2101,9 @@ class GitRepairModal extends Modal {
         })
         .catch((error) => {
           if (error instanceof SyncDeferredError) {
-            new Notice("Simple One Sneak：异常状态已退出，本机内容已重新 Commit；合并冲突已保留在同步面板等待处理", 12000);
+            new Notice("Simple One Sync：异常状态已退出，本机内容已重新 Commit；合并冲突已保留在同步面板等待处理", 12000);
           } else {
-            new Notice(`Simple One Sneak：异常修复未完成。${messageOf(error)}`, 15000);
+            new Notice(`Simple One Sync：异常修复未完成。${messageOf(error)}`, 15000);
           }
         });
     });
@@ -2385,7 +2385,7 @@ class SimpleSyncView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Simple One Sneak";
+    return "Simple One Sync";
   }
 
   getIcon(): string {
@@ -2726,7 +2726,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
     if (this.desktopPage === "ios-guide") { this.displayDevicePreview(containerEl, "从零开始的 Git 同步使用指南（iOS）", "iOS 端的接入步骤将在轻量版 Git 同步功能完成后补充。", "mobile"); return; }
     if (!Platform.isMobile && this.desktopPage === "setup") { this.displaySetup(containerEl); return; }
 
-    this.addHeading(containerEl, "Simple One Sneak");
+    this.addHeading(containerEl, "Simple One Sync");
     this.addEnableSetting(containerEl);
     if (!Platform.isMobile) this.addSetupEntry(containerEl);
 
@@ -2735,7 +2735,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
 
   private addEnableSetting(parent: HTMLElement): void {
     new Setting(parent)
-      .setName("启用 Simple One Sneak")
+      .setName("启用 Simple One Sync")
       .setDesc("显示右侧同步面板，并允许手动或定时同步。关闭后保留配置，但停止本插件的同步工作。")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.enabled).onChange(async (value) => {
@@ -2902,7 +2902,7 @@ class SimpleSyncSettingTab extends PluginSettingTab {
       this.setupViewStep = this.plugin.settings.setupStep;
     } catch (error) {
       this.setupMessage = this.refreshingSetupDeviceCode ? "正在刷新设备码…" : explainSetupError(error);
-      if (!this.refreshingSetupDeviceCode) new Notice(`Simple One Sneak：${this.setupMessage}`, 10000);
+      if (!this.refreshingSetupDeviceCode) new Notice(`Simple One Sync：${this.setupMessage}`, 10000);
     } finally {
       this.setupBusy = false;
       this.setupLoginCancel = undefined;
@@ -3542,12 +3542,12 @@ class SimpleSyncSettingTab extends PluginSettingTab {
           try {
             const operation = await this.plugin.getInterruptedGitOperationLabel();
             if (!operation) {
-              new Notice("Simple One Sneak：没有检测到未完成的 Rebase、Merge、Cherry-pick 或 Revert");
+              new Notice("Simple One Sync：没有检测到未完成的 Rebase、Merge、Cherry-pick 或 Revert");
               return;
             }
             new GitRepairModal(this.app, this.plugin, operation).open();
           } catch (error) {
-            new Notice(`Simple One Sneak：无法检查 Git 状态。${messageOf(error)}`, 10000);
+            new Notice(`Simple One Sync：无法检查 Git 状态。${messageOf(error)}`, 10000);
           } finally {
             button.setDisabled(false);
             button.setButtonText("恢复正常同步");
