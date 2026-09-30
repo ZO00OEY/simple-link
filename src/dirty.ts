@@ -73,6 +73,7 @@ export function shouldIgnore(
   patterns: readonly string[] = DEFAULT_SYNC_IGNORE_PATTERNS
 ): boolean {
   const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
+  if (normalized === ".obsidian/plugins/simple-link/data.json") return true;
   let ignored = false;
   for (const rawPattern of patterns) {
     const pattern = rawPattern.trim();

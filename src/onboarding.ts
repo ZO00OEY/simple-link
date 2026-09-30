@@ -62,6 +62,7 @@ export const SETUP_GITIGNORE = [
   ".obsidian/plugins/simple-one-sync/data.json",
   ".obsidian/plugins/obsidian-git/data.json",
   ".obsidian/plugins/recent-files-obsidian/data.json",
+  ".obsidian/plugins/simple-link/data.json",
   ".codex/output/",
   ".codex/AGENTS.md",
   ".claudian/sessions/",
@@ -116,7 +117,7 @@ function hasFileAsParent(path: string, otherFiles: Set<string>): boolean {
   return false;
 }
 
-function pathBatches(paths: string[]): string[][] {
+export function pathBatches(paths: string[]): string[][] {
   const batches: string[][] = [];
   let current: string[] = [];
   let length = 0;
@@ -405,7 +406,7 @@ export class GitSetup {
     catch { return `非 UTF-8 文本或二进制文件（${buffer.length} 字节）。`; }
   }
 
-  private async appendIgnore(repos: readonly NestedRepo[]): Promise<void> {
+  async appendIgnore(repos: readonly NestedRepo[]): Promise<void> {
     const file = nodePath!.join(this.vaultPath, ".gitignore");
     const existing = await this.readIgnore();
     const missing = [...missingSetupIgnoreRules(existing), ...nestedGitIgnoreRules(repos).filter((rule) => !existing.split(/\r?\n/).includes(rule))];

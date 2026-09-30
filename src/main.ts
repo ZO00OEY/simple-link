@@ -28,8 +28,8 @@ import {
 import { applyConflictResolutions, ConflictBlock, parseConflictBlocks } from "./conflict";
 import { describeGitError, isMissingRemoteRefError, isTransientGitNetworkError, isUncertainGitAuthError } from "./gitError";
 import { ZoeySyncConflictPreviewModal } from "./conflictPreview";
-import { GitSetup, OverlapChoice, SetupOverlapContent, SetupPreview, VerifiedRepo, explainSetupError, parseGithubRepoUrl } from "./onboarding";
-import { findNestedRepos, nestedGitIgnoreRules, rebuildNestedRepoTracking } from "./nestedRepos";
+import { GitSetup, OverlapChoice, SetupOverlapContent, SetupPreview, VerifiedRepo, SETUP_GITIGNORE, missingSetupIgnoreRules, pathBatches, explainSetupError, parseGithubRepoUrl } from "./onboarding";
+import { findNestedRepos, nestedGitIgnoreRules, nestedRepoFiles, rebuildNestedRepoTracking } from "./nestedRepos";
 import createPrivateRepositoryImage from "../assets/create-private-repository.png";
 
 type ChangeViewMode = "upload" | "commit";
@@ -42,6 +42,11 @@ interface ViewStatusState {
 
 interface DesktopCommitResult {
   committed: boolean;
+}
+
+interface FileTrackingPreview {
+  paths: string[];
+  missingRules: string[];
 }
 
 interface InterruptedGitOperation {
@@ -1546,6 +1551,48 @@ export default class ZoeySyncPlugin extends Plugin {
       this.exec(program, args, program === "git" && (args[0] === "fetch" || args[0] === "push"), true, timeoutMs, onOutput, stdinText, signal));
   }
 
+  async inspectFileTracking(): Promise<FileTrackingPreview> {
+    if (Platform.isMobile || !this.settings.setupComplete) throw new Error("请先完成电脑端 Git 接入");
+    const nodeRequire = (globalThis as unknown as { require?: (name: string) => unknown }).require;
+    if (!nodeRequire) throw new Error("文件追踪检查仅支持电脑端");
+    const fs = (nodeRequire("fs") as typeof import("fs")).promises;
+    const path = nodeRequire("path") as typeof import("path");
+    const vaultPath = this.vaultBasePath();
+    const root = (await this.gitRaw(["rev-parse", "--show-toplevel"])).trim();
+    if ((await fs.realpath(root)).toLowerCase() !== (await fs.realpath(vaultPath)).toLowerCase()) {
+      throw new Error("当前 Vault 不是独立的 Git 仓库，无法修复文件追踪");
+    }
+    await this.ensureNormalGitState();
+    let existingIgnore = "";
+    try { existingIgnore = await fs.readFile(path.join(vaultPath, ".gitignore"), "utf8"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    const tracked = (await this.gitRaw(["ls-files", "--cached", "-z"])).split("\0").filter(Boolean);
+    const ignored = (await this.gitRaw(["ls-files", "-ci", "--exclude-standard", "-z"])).split("\0").filter(Boolean);
+    const nestedRepos = await findNestedRepos(vaultPath);
+    const nestedData = new Set((await nestedRepoFiles(vaultPath, nestedRepos, (args) => this.gitRaw(args)))
+      .filter((name) => nestedRepos.some((repo) => name === `${repo.directory}/data.json`)));
+    const paths = [...new Set([
+      ...ignored.filter((file) => !nestedData.has(file)),
+      ...tracked.filter((file) => shouldIgnore(file, SETUP_GITIGNORE))
+    ])].filter((file) => file !== ".gitignore").sort();
+    return { paths, missingRules: missingSetupIgnoreRules(existingIgnore) };
+  }
+
+  async repairFileTracking(preview: FileTrackingPreview): Promise<number> {
+    let repaired = 0;
+    await this.enqueueDesktopGit(async () => {
+      const current = await this.inspectFileTracking();
+      if (JSON.stringify(current) !== JSON.stringify(preview)) throw new Error("文件追踪状态已变化，请重新检查后再修复");
+      await this.setup().appendIgnore([]);
+      const ignored = (await this.gitRaw(["ls-files", "-ci", "--exclude-standard", "-z"])).split("\0").filter((file) => file && file !== ".gitignore");
+      if (preview.paths.some((file) => !ignored.includes(file))) throw new Error("部分文件仍未被 .gitignore 排除，已停止移除 Git 跟踪");
+      for (const batch of pathBatches(preview.paths)) await this.git(["rm", "-f", "--cached", "--", ...batch]);
+      repaired = preview.paths.length;
+      return repaired > 0 || preview.missingRules.length > 0;
+    }, "修复文件追踪");
+    return repaired;
+  }
+
   async beginSetup(): Promise<void> {
     if (this.syncing) throw new Error("当前有同步任务正在运行，请稍后重试");
     await this.desktopGitQueue;
@@ -1709,7 +1756,7 @@ export default class ZoeySyncPlugin extends Plugin {
     }
   }
 
-  private async exec(program: string, args: string[], authenticated = false, trim = true, timeoutMs = 120000, onOutput?: (chunk: string) => void, stdinText?: string, signal?: AbortSignal): Promise<string> {
+  async exec(program: string, args: string[], authenticated = false, trim = true, timeoutMs = 120000, onOutput?: (chunk: string) => void, stdinText?: string, signal?: AbortSignal): Promise<string> {
     const nodeRequire = (globalThis as unknown as { require?: (name: string) => unknown }).require;
     if (!nodeRequire) throw new Error("当前平台不支持桌面命令");
     const childProcess = nodeRequire("child_process") as typeof import("child_process");
@@ -2071,6 +2118,50 @@ class CreatePrivateRepositoryModal extends Modal {
       }
     });
     figure.createEl("figcaption", { text: "图片仅作参考；GitHub 页面布局可能更新，请以页面上的字段名称为准。" });
+  }
+}
+
+class FileTrackingModal extends Modal {
+  private running = false;
+
+  constructor(app: App, private plugin: ZoeySyncPlugin, private preview: FileTrackingPreview) {
+    super(app);
+  }
+
+  onOpen(): void {
+    this.modalEl.addClass("zoey-sync-tracking-modal");
+    const body = this.contentEl;
+    body.empty();
+    body.createEl("h2", { text: "检查并修复文件追踪", cls: "zoey-sync-tracking-title" });
+    body.createEl("p", { text: `待补充 ${this.preview.missingRules.length} 条忽略规则；${this.preview.paths.length} 个已追踪文件应改为仅本机保留。`, cls: "zoey-sync-tracking-summary" });
+    body.createEl("p", { text: "修复只调整这些文件的 Git 跟踪，并补齐缺少的 .gitignore 规则。本机文件和 Git 历史都会保留；下一次 Commit、Push 后，文件会从远端当前版本退出。", cls: "zoey-sync-tracking-description" });
+    if (this.preview.missingRules.length) {
+      const rules = body.createEl("details", { cls: "zoey-sync-tracking-details" });
+      rules.createEl("summary", { text: `查看待补充的规则（${this.preview.missingRules.length}）` });
+      rules.createEl("pre", { text: this.preview.missingRules.join("\n"), cls: "zoey-sync-tracking-preview" });
+    }
+    if (this.preview.paths.length) {
+      const files = body.createEl("details", { cls: "zoey-sync-tracking-details" });
+      files.createEl("summary", { text: `查看将停止追踪的文件（${this.preview.paths.length}）` });
+      files.createEl("pre", { text: this.preview.paths.join("\n"), cls: "zoey-sync-tracking-preview" });
+    }
+    const actions = body.createDiv({ cls: "modal-button-container" });
+    actions.createEl("button", { text: "关闭" }).addEventListener("click", () => this.close());
+    const apply = actions.createEl("button", { text: "应用修复", cls: "mod-cta" });
+    apply.disabled = this.preview.paths.length === 0 && this.preview.missingRules.length === 0;
+    apply.addEventListener("click", () => {
+      if (this.running) return;
+      this.running = true;
+      apply.disabled = true;
+      apply.setText("正在修复…");
+      void this.plugin.repairFileTracking(this.preview).then((count) => {
+        new Notice(`Simple Link：已让 ${count} 个文件退出 Git 跟踪；本机文件已保留`);
+        this.close();
+      }).catch((error) => {
+        new Notice(`Simple Link：修复失败。${messageOf(error)}`, 10000);
+        apply.setText("请关闭后重新检查");
+      }).finally(() => { this.running = false; });
+    });
   }
 }
 
@@ -2749,8 +2840,7 @@ class ZoeySyncView extends ItemView {
 }
 
 class ZoeySyncSettingTab extends PluginSettingTab {
-  private desktopPage: "root" | "mobile" | "server" | "setup" | "android-guide" | "ios-guide" = "root";
-  private setupPanel: "guide" | "advanced" = "guide";
+  private desktopPage: "root" | "mobile" | "server" | "setup" | "desktop-settings" | "beginner-desktop" | "beginner-mobile" | "beginner-server" = "root";
   private setupViewStep = 1;
   private setupRepoInput = "";
   private setupRepoNameInput = "";
@@ -2777,16 +2867,20 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.addClass("zoey-sync-settings");
-    containerEl.toggleClass("zoey-sync-setup-page", this.desktopPage === "setup" && !Platform.isMobile);
+    containerEl.toggleClass("zoey-sync-setup-page", ["setup", "desktop-settings"].includes(this.desktopPage) && !Platform.isMobile);
+    containerEl.toggleClass("zoey-sync-mobile-guide-page", this.desktopPage === "beginner-mobile");
 
+    if (this.desktopPage === "beginner-mobile") { this.displayBeginnerMobile(containerEl); return; }
+    if (this.desktopPage === "beginner-desktop") { this.displayDevicePreview(containerEl, "从创建仓库开始：电脑端同步", "请在电脑端打开此引导，完成 GitHub 授权、仓库接入与两端检查。"); return; }
+    if (this.desktopPage === "beginner-server") { this.displayDevicePreview(containerEl, "从零开始的服务器端同步指南", "服务器端接入引导将在这里补充。"); return; }
     if (this.desktopPage === "mobile") { this.displayMobilePreview(containerEl); return; }
     if (this.desktopPage === "server") { this.displayServerPreview(containerEl); return; }
-    if (this.desktopPage === "android-guide") { this.displayDevicePreview(containerEl, "从零开始的 Git 同步使用指南（Android）", "Android 端的接入步骤将在轻量版 Git 同步功能完成后补充。", "mobile"); return; }
-    if (this.desktopPage === "ios-guide") { this.displayDevicePreview(containerEl, "从零开始的 Git 同步使用指南（iOS）", "iOS 端的接入步骤将在轻量版 Git 同步功能完成后补充。", "mobile"); return; }
     if (!Platform.isMobile && this.desktopPage === "setup") { this.displaySetup(containerEl); return; }
+    if (!Platform.isMobile && this.desktopPage === "desktop-settings") { this.displayDesktopSettings(containerEl); return; }
 
     containerEl.createEl("h2", { text: "Simple Link" });
     this.addEnableSetting(containerEl);
+    this.displayBeginner(containerEl);
     this.displayDesktop(containerEl);
   }
 
@@ -2859,14 +2953,132 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     button.createSpan({ text: "系统识别 · 当前设备", cls: "zoey-sync-device-badge" });
   }
 
+  private addBeginnerLink(parent: HTMLElement, title: string, icon: string, page: "setup" | "beginner-desktop" | "beginner-mobile" | "beginner-server"): void {
+    const button = parent.createEl("button", { cls: "zoey-sync-page-link zoey-sync-beginner-link", attr: { type: "button" } });
+    setIcon(button.createSpan({ cls: "zoey-sync-page-link__icon" }), icon);
+    button.createSpan({ text: title, cls: "zoey-sync-page-link__title" });
+    button.addEventListener("click", () => {
+      if (page === "setup") this.prepareSetupGuide();
+      this.desktopPage = page;
+      this.display();
+    });
+  }
+
+  private prepareSetupGuide(): void {
+    this.stopSetupBrowserAuthorization();
+    this.setupAuthMode = null;
+    this.setupAuthVerified = false;
+    this.setupFailure = false;
+    this.setupViewStep = !this.plugin.settings.setupComplete && this.plugin.settings.setupStep === 4 && !this.plugin.getSetupPreview() ? 3 : this.plugin.settings.setupStep;
+    this.setupRepoInput = this.plugin.settings.setupRepoUrl || this.plugin.settings.gitRemoteUrl;
+    this.setupRepoMode = "existing";
+  }
+
+  private displayBeginner(containerEl: HTMLElement): void {
+    containerEl.createEl("h3", { text: "入门小助手", cls: "zoey-sync-section-title" });
+    containerEl.createEl("p", { text: "从创建仓库开始，按设备查看接入步骤。", cls: "zoey-sync-section-desc" });
+    const links = containerEl.createDiv({ cls: "zoey-sync-beginner-links" });
+    this.addBeginnerLink(links, "电脑端同步引导", "monitor", Platform.isMobile ? "beginner-desktop" : "setup");
+    this.addBeginnerLink(links, "手机端同步引导", "smartphone", "beginner-mobile");
+    this.addBeginnerLink(links, "服务器端同步引导", "server", "beginner-server");
+  }
+
+  private displayBeginnerMobile(containerEl: HTMLElement): void {
+    this.displayDevicePreview(containerEl, "手机端同步引导", "先在电脑上取得 GitHub Token，再到手机端完成接入。");
+    const columns = containerEl.createDiv({ cls: "zoey-sync-mobile-guide" });
+    const beforeToken = columns.createDiv({ cls: "zoey-sync-mobile-guide__card" });
+    beforeToken.createEl("h3", { text: "我尚未获取 Token", cls: "zoey-sync-mobile-guide__title" });
+    beforeToken.createEl("p", { text: "需在已接入仓库的电脑端操作。" });
+    if (this.plugin.settings.setupComplete) {
+      beforeToken.createEl("p", { text: "✓ 电脑端首次接入已完成，可以继续检查登录并获取 Token。", cls: "zoey-sync-mobile-guide__ready" });
+    } else {
+      const setupHint = beforeToken.createDiv({ cls: "zoey-sync-mobile-guide__setup-hint" });
+      setupHint.createSpan({ text: "请先完成电脑端首次接入。" });
+      if (!Platform.isMobile) {
+        const setupLink = setupHint.createEl("button", { text: "打开电脑端引导", attr: { type: "button" } });
+        setupLink.addEventListener("click", () => { this.prepareSetupGuide(); this.desktopPage = "setup"; this.display(); });
+      }
+    }
+    const loginStep = beforeToken.createDiv({ cls: "zoey-sync-mobile-guide__step" });
+    loginStep.createEl("h4", { text: "第一步：确认登录状态" });
+    loginStep.createEl("p", { text: "检查 GitHub CLI 当前账号是否仍可登录。" });
+    const checkButton = loginStep.createEl("button", { text: "检查登录状态", attr: { type: "button" } });
+    const tokenStep = beforeToken.createDiv({ cls: "zoey-sync-mobile-guide__step" });
+    tokenStep.createEl("h4", { text: "第二步：获取 Token" });
+    tokenStep.createEl("p", { text: "检查当前账号对已接入仓库的写入权限，再复制电脑端 GitHub CLI 使用的 Token。它可能同时拥有其他仓库权限，请妥善保存，勿发给他人。" });
+    const tokenButton = tokenStep.createEl("button", { text: "检查权限、生成并复制 Token", attr: { type: "button" } });
+    const result = beforeToken.createEl("p", { cls: "zoey-sync-mobile-guide__result", attr: { role: "status", "aria-live": "polite" } });
+    const tokenDisplay = beforeToken.createDiv({ cls: "zoey-sync-mobile-guide__token" });
+    tokenDisplay.hidden = true;
+    tokenDisplay.createEl("div", { text: "GitHub Token（明文）", cls: "zoey-sync-mobile-guide__token-label" });
+    const tokenRow = tokenDisplay.createDiv({ cls: "zoey-sync-mobile-guide__token-row" });
+    const tokenText = tokenRow.createEl("code", { cls: "zoey-sync-mobile-guide__token-text" });
+    const copyToken = tokenRow.createEl("button", { cls: "clickable-icon zoey-sync-mobile-guide__copy", attr: { type: "button", title: "复制 Token", "aria-label": "复制 Token" } });
+    setIcon(copyToken, "copy");
+    tokenDisplay.createEl("p", { text: "本插件不会保存 Token。关闭此页面后，明文会消失；需要时请重新检查权限并获取 Token。", cls: "zoey-sync-mobile-guide__token-note" });
+    let tokenOnPage = "";
+    copyToken.addEventListener("click", () => void (async () => {
+      try { await navigator.clipboard.writeText(tokenOnPage); result.setText("Token 已再次复制到剪贴板。"); }
+      catch { result.setText("复制失败，请从下方明文手动复制 Token。"); }
+    })());
+    const desktop = !Platform.isMobile;
+    checkButton.disabled = !desktop;
+    tokenButton.disabled = !desktop;
+    if (!desktop) result.setText("请在电脑端打开本页完成前两步。");
+    const run = async (action: () => Promise<void>): Promise<void> => {
+      checkButton.disabled = true;
+      tokenButton.disabled = true;
+      result.setText("正在检查…");
+      try { await action(); }
+      catch (error) { result.setText(`操作失败：${messageOf(error)}`); }
+      finally { checkButton.disabled = false; tokenButton.disabled = false; }
+    };
+    checkButton.addEventListener("click", () => void run(async () => {
+      await this.plugin.exec("gh", ["auth", "status", "--active", "--hostname", "github.com"]);
+      result.setText("GitHub 登录状态正常。可继续获取 Token。");
+    }));
+    tokenButton.addEventListener("click", () => void run(async () => {
+      tokenOnPage = "";
+      tokenText.setText("");
+      tokenDisplay.hidden = true;
+      await this.plugin.exec("gh", ["auth", "status", "--active", "--hostname", "github.com"]);
+      const remote = this.plugin.settings.setupRepoUrl || this.plugin.settings.gitRemoteUrl;
+      if (!remote) throw new Error("请先完成电脑端 GitHub 仓库接入。");
+      const { owner, name } = parseGithubRepoUrl(remote);
+      const canPush = await this.plugin.exec("gh", ["api", `repos/${owner}/${name}`, "--jq", ".permissions.push"]);
+      if (canPush.trim() !== "true") throw new Error("当前 GitHub 账号没有该仓库的写入权限。");
+      const token = (await this.plugin.exec("gh", ["auth", "token", "--hostname", "github.com"])).trim();
+      if (!token) throw new Error("GitHub CLI 未返回 Token。");
+      tokenOnPage = token;
+      tokenText.setText(token);
+      tokenDisplay.hidden = false;
+      try { await navigator.clipboard.writeText(token); result.setText("已确认仓库写入权限，Token 已复制到剪贴板，并在下方显示。"); }
+      catch { result.setText("已确认仓库写入权限，Token 已在下方显示；自动复制失败，请手动复制。"); }
+    }));
+    const hasToken = columns.createDiv({ cls: "zoey-sync-mobile-guide__card" });
+    hasToken.createEl("h3", { text: "我已获取 Token", cls: "zoey-sync-mobile-guide__title" });
+    hasToken.createEl("p", { text: "在手机端操作。" });
+    hasToken.createEl("p", { text: "手机端 Token 填写与同步配置将在轻量版 Git 功能完成后提供。", cls: "zoey-sync-mobile-guide__placeholder" });
+  }
+
+  private displayDesktopSettings(containerEl: HTMLElement): void {
+    const page = containerEl.createDiv({ cls: "zoey-sync-setup-layout" });
+    const header = page.createDiv({ cls: "zoey-sync-page-header zoey-sync-setup-header" });
+    const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", title: "返回", "aria-label": "返回设备同步" } });
+    setIcon(back, "arrow-left");
+    back.addEventListener("click", () => { this.desktopPage = "root"; this.display(); });
+    header.createEl("h2", { text: "电脑端 Git 同步", cls: "zoey-sync-page-title" });
+    this.displayDesktopAdvanced(page);
+  }
+
   private displayDesktop(containerEl: HTMLElement): void {
     const currentDevice = this.currentDevice();
-    containerEl.createEl("h3", { text: "设备同步", cls: "zoey-sync-section-title" });
+    containerEl.createEl("h3", { text: "设不同设备同步设置", cls: "zoey-sync-section-title" });
     containerEl.createEl("p", { text: "已自动识别当前设备，并停用其他平台的同步设置。", cls: "zoey-sync-section-desc" });
     this.addSetupEntry(containerEl, currentDevice === "git");
     const entries = [
-      { page: "mobile", title: "手机端同步", desc: "Android / iOS · 轻量版 Git 同步", icon: "smartphone" },
-      { page: "server", title: "服务器端同步", desc: "Linux · 服务器同步设置", icon: "server" }
+      { page: "mobile", title: "手机端 轻量 Git 同步设置", desc: "Android / iOS · 轻量版 Git 同步", icon: "smartphone" },
+      { page: "server", title: "服务器端 脚本 Git 同步设置", desc: "Linux · 服务器同步设置", icon: "server" }
     ] as const;
     for (const entry of entries) {
       const isCurrent = currentDevice === entry.page;
@@ -2887,11 +3099,11 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     }
   }
 
-  private displayDevicePreview(containerEl: HTMLElement, title: string, description: string, backPage: "root" | "mobile" = "root"): void {
+  private displayDevicePreview(containerEl: HTMLElement, title: string, description: string): void {
     const header = containerEl.createDiv({ cls: "zoey-sync-page-header" });
-    const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", "aria-label": "返回设备同步" } });
+    const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", "aria-label": "返回" } });
     setIcon(back, "arrow-left");
-    back.addEventListener("click", () => { this.desktopPage = backPage; this.display(); });
+    back.addEventListener("click", () => { this.desktopPage = "root"; this.display(); });
     header.createEl("h2", { text: title, cls: "zoey-sync-page-title" });
     containerEl.createEl("p", { text: description, cls: "zoey-sync-section-desc" });
   }
@@ -2914,18 +3126,6 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     } else {
       this.displayDevicePreview(containerEl, "手机端同步", "Android / iOS 轻量版 Git 同步设置将在这里补充。");
     }
-    for (const guide of [
-      { page: "android-guide", title: "从零开始的 Git 同步使用指南（Android）" },
-      { page: "ios-guide", title: "从零开始的 Git 同步使用指南（iOS）" }
-    ] as const) {
-      const button = containerEl.createEl("button", { cls: "zoey-sync-page-link zoey-sync-device-link is-preview", attr: { type: "button" } });
-      setIcon(button.createSpan({ cls: "zoey-sync-page-link__icon" }), "book-open");
-      const copy = button.createSpan({ cls: "zoey-sync-page-link__copy" });
-      copy.createSpan({ text: guide.title, cls: "zoey-sync-page-link__title" });
-      copy.createSpan({ text: "待补充", cls: "zoey-sync-page-link__desc" });
-      setIcon(button.createSpan({ cls: "zoey-sync-page-link__chevron" }), "chevron-right");
-      button.addEventListener("click", () => { this.desktopPage = guide.page; this.display(); });
-    }
   }
 
   private addSetupEntry(parent: HTMLElement, isCurrent: boolean): void {
@@ -2933,32 +3133,15 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     button.disabled = !isCurrent;
     setIcon(button.createSpan({ cls: "zoey-sync-page-link__icon" }), "monitor");
     const copy = button.createSpan({ cls: "zoey-sync-page-link__copy" });
-    copy.createSpan({ text: "电脑端 Git 同步", cls: "zoey-sync-page-link__title" });
-    copy.createSpan({ text: this.desktopSetupStatusText(), cls: "zoey-sync-page-link__desc" });
+    copy.createSpan({ text: "电脑端 Git 同步设置", cls: "zoey-sync-page-link__title" });
+    copy.createSpan({ text: "界面、自动同步时间与 Git 设置", cls: "zoey-sync-page-link__desc" });
     if (!isCurrent) return;
     this.addCurrentDeviceBadge(button);
     setIcon(button.createSpan({ cls: "zoey-sync-page-link__chevron" }), "chevron-right");
     button.addEventListener("click", () => {
-      this.desktopPage = "setup";
-      this.setupPanel = "guide";
-      this.stopSetupBrowserAuthorization();
-      this.setupAuthMode = null;
-      this.setupAuthVerified = false;
-      this.setupFailure = false;
-      this.setupViewStep = !this.plugin.settings.setupComplete && this.plugin.settings.setupStep === 4 && !this.plugin.getSetupPreview()
-        ? 3 : this.plugin.settings.setupStep;
-      this.setupRepoInput = this.plugin.settings.setupRepoUrl || this.plugin.settings.gitRemoteUrl;
-      this.setupRepoMode = "existing";
+      this.desktopPage = "desktop-settings";
       this.display();
     });
-  }
-
-  private desktopSetupStatusText(): string {
-    const { setupComplete, setupVerified, setupMutationStarted, setupStep, setupBackup } = this.plugin.settings;
-    if (setupMutationStarted) return "接入未完成，请继续引导";
-    if (setupComplete) return setupVerified ? "已完成接入" : "已有连接，待核验";
-    if (setupStep > 1 || setupBackup) return "接入进行中，请继续引导";
-    return "当前未接入，可通过引导从0开始尝试Git同步";
   }
 
   private setupLink(parent: HTMLElement, label: string, href: string): void {
@@ -3039,10 +3222,8 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", title: "返回", "aria-label": "返回设置" } });
     setIcon(back, "arrow-left");
     back.addEventListener("click", () => { this.stopSetupBrowserAuthorization(); this.desktopPage = "root"; this.display(); });
-    header.createEl("h2", { text: "电脑端 Git 同步", cls: "zoey-sync-page-title" });
-    if (this.setupPanel === "guide") {
-      page.createEl("p", { text: "按顺序完成四步。已核验的步骤可以随时返回查看。", cls: "zoey-sync-section-desc" });
-    }
+    header.createEl("h2", { text: "从创建仓库开始：电脑端同步", cls: "zoey-sync-page-title" });
+    page.createEl("p", { text: "按顺序完成四步。已核验的步骤可以随时返回查看。", cls: "zoey-sync-section-desc" });
     const guidedDone = this.plugin.settings.setupComplete && !!this.plugin.settings.setupVerified;
     const latestConnectionLog = this.plugin.getRecentErrorLogs()
       .find((entry) => /测试连接|Fetch|Pull|Push|同步/.test(entry.context));
@@ -3079,45 +3260,16 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     if (guidedDone && this.plugin.settings.enabled) {
       const restart = status.createEl("button", { text: "重新检查或修复接入", attr: { type: "button" } });
       restart.addEventListener("click", () => {
-        this.setupPanel = "guide";
         void this.runSetup(() => this.plugin.beginSetup(), "已暂停自动 Git 操作，请从第 1 步开始。");
       });
     } else if (this.plugin.settings.setupComplete && !guidedDone) {
       const restart = status.createEl("button", { text: "从第一步重新检查接入", attr: { type: "button" } });
       restart.addEventListener("click", () => {
-        this.setupPanel = "guide";
         void this.runSetup(() => this.plugin.beginSetup(), "已暂停自动 Git 操作，请从第 1 步开始。");
       });
     }
-    const tabList = page.createDiv({ cls: "zoey-sync-setup-tabs", attr: { role: "tablist", "aria-label": "电脑端 Git 同步设置" } });
-    for (const panel of ["guide", "advanced"] as const) {
-      const selected = this.setupPanel === panel;
-      const tab = tabList.createEl("button", {
-        text: panel === "guide" ? "接入引导" : "高级设置",
-        cls: `zoey-sync-setup-tab${selected ? " is-active" : ""}`,
-        attr: {
-          type: "button",
-          id: `zoey-sync-setup-tab-${panel}`,
-          role: "tab",
-          "aria-selected": String(selected),
-          "aria-controls": "zoey-sync-setup-tab-panel"
-        }
-      });
-      tab.addEventListener("click", () => {
-        if (this.setupPanel === panel) return;
-        if (panel === "advanced") this.stopSetupBrowserAuthorization();
-        this.setupPanel = panel;
-        this.display();
-      });
-    }
-    const panel = page.createDiv({
-      cls: "zoey-sync-setup-tab-panel",
-      attr: { id: "zoey-sync-setup-tab-panel", role: "tabpanel", "aria-labelledby": `zoey-sync-setup-tab-${this.setupPanel}` }
-    });
-    if (this.setupPanel === "advanced") {
-      this.displayDesktopAdvanced(panel);
-      return;
-    }
+    page.createEl("h3", { text: "接入引导", cls: "zoey-sync-section-title zoey-sync-setup-guide-title" });
+    const panel = page.createDiv({ cls: "zoey-sync-setup-tab-panel" });
     if (!this.plugin.settings.setupComplete && this.plugin.settings.setupBackup && !this.plugin.settings.setupMutationStarted) {
       new Setting(panel).setDesc("退出向导并恢复之前已配置的自动同步。")
         .addButton((button) => button.setButtonText("取消向导，恢复旧同步").onClick(() => void this.runSetup(() => this.plugin.cancelSetup(), "已恢复之前的同步配置。")));
@@ -3314,8 +3466,8 @@ class ZoeySyncSettingTab extends PluginSettingTab {
   }
 
   private displaySetupPreview(body: HTMLElement): void {
-    body.createEl("p", { text: `当前 Vault：${this.plugin.getVaultBasePath()}` });
-    body.createEl("p", { text: "这一步只检查两端状态；发现内嵌仓库时会列出待补的 .git 忽略规则和待重建的文件追踪。完成接入时执行；已接入的仓库会在下次同步时处理。" });
+    body.createEl("p", { text: `当前 Vault：${this.plugin.getVaultBasePath()}`, cls: "zoey-sync-section-desc" });
+    body.createEl("p", { text: "先检查本机和 GitHub 的文件差异，再决定如何接入。检查不会合并、删除或推送笔记。", cls: "zoey-sync-section-desc" });
     if (this.plugin.settings.setupComplete && !this.plugin.settings.setupVerified) {
       body.createEl("p", { text: "当前连接来自旧版设置，尚未经过此向导核验。使用上方「从第一步重新检查接入」后可查看两端文件。" });
     }
@@ -3324,34 +3476,45 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         this.setupOverlapContent = undefined;
         this.setupRebuildConfirmed = false;
         await this.plugin.inspectSetupRepository();
-      }, this.plugin.settings.setupComplete ? "已重新读取两端状态。" : "检查完成。请核对结果并选择同名文件的保留版本。", false)));
+      }, "", false)));
     }
     const preview = this.plugin.getSetupPreview();
     if (preview) {
+      const overview = body.createDiv({ cls: "zoey-sync-setup-overview" });
+      for (const [label, value] of [["本机文件", preview.localFiles.length], ["GitHub 文件", preview.remoteFiles.length], ["仅本机", preview.localOnly.length], ["仅 GitHub", preview.remoteOnly.length], ["同名差异", preview.overlaps.length]] as [string, number][]) {
+        const item = overview.createDiv({ cls: "zoey-sync-setup-overview__item" });
+        item.createEl("strong", { text: String(value) });
+        item.createSpan({ text: label });
+      }
       if (preview.nestedRepos.length) body.createEl("p", {
-        text: `发现 ${preview.nestedRepos.length} 个内嵌 Git 仓库。${this.plugin.settings.setupComplete ? "下次同步" : "完成接入"}时会忽略其 .git 元数据，并重建主仓库对小库普通文件的追踪；小库自己的提交历史不会改动。`,
+        text: `发现 ${preview.nestedRepos.length} 个内嵌 Git 仓库。只会排除它们的 .git 元数据；这些仓库自己的历史不受影响。`,
         cls: "zoey-sync-section-desc"
       });
-      if (preview.alreadyLinked) body.createEl("p", { text: "当前 Git 历史已包含远端提交。接入时会补充忽略规则、处理内嵌仓库追踪，并推送本机未上传的更改。", cls: "zoey-sync-setup-done" });
-      else if (preview.relatedHistory) body.createEl("p", { text: "本机与远端有共同历史，远端有新提交。接入时会正常合并；若发生冲突会停止并提示处理，不会直接覆盖同名文件。", cls: "zoey-sync-section-desc" });
-      body.createEl("p", { text: `本地 ${preview.localFiles.length} 个文件，远端 ${preview.remoteFiles.length} 个文件；仅本地 ${preview.localOnly.length}，仅远端 ${preview.remoteOnly.length}，同名且内容相同 ${preview.identicalCount}，需人工选择 ${preview.overlaps.length}。` });
-      body.createEl("p", { text: preview.localRoot
-        ? `现有 Git 仓库：${preview.localRoot}；本机分支：${preview.localBranch}；origin：${preview.origin || "未设置"}；首次推送目标：${preview.branch}`
-        : `Vault 尚未初始化 Git；完成接入时会在当前 Vault 创建 ${preview.branch} 分支。` });
+      if (preview.alreadyLinked) body.createEl("p", { text: "本机已包含 GitHub 的提交记录，可以继续核对文件。", cls: "zoey-sync-setup-done" });
+      else if (preview.relatedHistory) body.createEl("p", { text: "两端有共同历史；完成接入时会合并 GitHub 的新提交，冲突会停下等待处理。", cls: "zoey-sync-section-desc" });
+      body.createEl("p", { text: preview.localRoot ? `本机分支：${preview.localBranch} · GitHub 分支：${preview.branch}` : `当前 Vault 还没有 Git 仓库；完成接入时会创建 ${preview.branch} 分支。`, cls: "zoey-sync-section-desc" });
+      body.createEl("h4", { text: "Git 忽略规则", cls: "zoey-sync-subsection-title" });
+      body.createEl("p", { text: `本机 .gitignore 目前缺少 ${preview.missingIgnoreRules.length} 条建议规则，用于排除工作区、回收站、缓存和插件本机数据。完成接入时会补齐；若你选择 GitHub 的同名文件，会先采用远端版本。`, cls: "zoey-sync-section-desc" });
+      body.createEl("p", { text: "规则只阻止今后自动加入文件。已经被 Git 追踪的文件，需要在完成接入时选择重建追踪；本机文件不会因此删除。", cls: "zoey-sync-section-desc" });
+      if (preview.missingIgnoreRules.length) {
+        const rules = body.createEl("details", { cls: "zoey-sync-setup-files" });
+        rules.createEl("summary", { text: `查看待补充的规则（${preview.missingIgnoreRules.length}）` });
+        rules.createEl("pre", { text: preview.missingIgnoreRules.join("\n") });
+      }
       if (preview.localRoot && !preview.relatedHistory && preview.localBranch !== preview.branch) {
         body.createEl("p", { text: `本机已有独立历史，当前 ${preview.localBranch} 分支接入后会推送到远端 ${preview.branch} 分支。请核对这是否是要接入的仓库。`, cls: "zoey-sync-section-desc" });
       }
       if (preview.localRoot) {
-        body.createEl("p", { text: `本地 ${preview.trackedExcludedLocal.length} 个、远端 ${preview.trackedExcludedRemote.length} 个已跟踪文件符合现有或待补的 .gitignore 规则。可重建整个 Git 追踪索引作为纠错：先取消全部追踪，再按最终 .gitignore 重新逐文件加入；本机文件不会删除。` });
+        body.createEl("p", { text: `本机 ${preview.trackedExcludedLocal.length} 个、GitHub ${preview.trackedExcludedRemote.length} 个文件仍被追踪，但符合忽略规则。已追踪文件不会仅因加入 .gitignore 就退出同步。`, cls: "zoey-sync-section-desc" });
         this.setupFileList(body, "本地已跟踪但建议忽略", preview.trackedExcludedLocal);
         this.setupFileList(body, "远端已跟踪但建议忽略", preview.trackedExcludedRemote);
-        if (!this.plugin.settings.setupComplete) {
-          new Setting(body).setName("Git 追踪方式")
-            .setDesc("重建会清空 Git 索引并重新加入未忽略的文件；已忽略文件将停止追踪，推送后从远端当前版本移除。")
+        if (!this.plugin.settings.setupComplete && (preview.trackedExcludedLocal.length || preview.trackedExcludedRemote.length)) {
+          new Setting(body).setName("已有文件的追踪")
+            .setDesc("选择重建后，Git 会按最终忽略规则重新登记文件；本机文件保留，远端当前版本会在推送后移除被忽略的文件。")
             .addDropdown((dropdown) => dropdown
               .addOption("", "请选择")
-              .addOption("keep", "保留现有追踪")
-              .addOption("rebuild", "取消全部追踪并重建")
+              .addOption("keep", "暂时保留现有追踪")
+              .addOption("rebuild", "按忽略规则重建追踪")
               .setValue(this.plugin.getSetupTrackingChoice() || "")
               .onChange((value) => {
                 this.plugin.setSetupTrackingChoice(value ? value as "keep" | "rebuild" : undefined);
@@ -3360,9 +3523,11 @@ class ZoeySyncSettingTab extends PluginSettingTab {
               }));
         }
       }
+      body.createEl("h4", { text: "文件差异", cls: "zoey-sync-subsection-title" });
       this.setupFileList(body, "仅本地文件", preview.localOnly);
       this.setupFileList(body, "仅远端文件", preview.remoteOnly);
-      this.setupFileList(body, "同名文件", preview.overlaps);
+      if (this.plugin.settings.setupComplete) this.setupFileList(body, "同名文件", preview.overlaps);
+      if (!preview.overlaps.length) body.createEl("p", { text: "没有需要逐项选择的同名差异。", cls: "zoey-sync-setup-done" });
       if (preview.overlaps.length && !this.plugin.settings.setupComplete) {
         body.createEl("p", { text: "每个同名文件都要明确选择本机或远端版本。" });
         if (preview.overlaps.includes(".gitignore")) {
@@ -3414,6 +3579,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
   }
 
   private setupFileList(body: HTMLElement, title: string, paths: string[]): void {
+    if (paths.length === 0) return;
     const details = body.createEl("details", { cls: "zoey-sync-setup-files" });
     details.createEl("summary", { text: `${title}（${paths.length}）` });
     for (const path of paths.slice(0, 200)) details.createEl("div", { text: path });
@@ -3431,13 +3597,9 @@ class ZoeySyncSettingTab extends PluginSettingTab {
       return;
     }
     const remoteIgnoreSelected = this.plugin.getSetupChoices()[".gitignore"] === "remote";
-    const ignoreSummary = this.plugin.settings.setupComplete
-      ? remoteIgnoreSelected ? "已按你的选择采用远端 .gitignore，并逐条补充缺少的建议规则。" : "现有本机 .gitignore 规则已保留。"
-      : remoteIgnoreSelected
-        ? "你已选择远端 .gitignore：本机自定义规则将被替换；接入时会以远端版本为基础重新逐条检查建议规则。"
-      : preview.missingIgnoreRules.length > 0
-        ? `首次提交前只补充 .gitignore 缺少的 ${preview.missingIgnoreRules.length} 条规则；已有规则不会被覆盖。`
-        : "现有 .gitignore 已涵盖建议规则，不会追加重复规则。";
+    const ignoreSummary = remoteIgnoreSelected ? "将采用 GitHub 的 .gitignore，再补齐缺少的建议规则。"
+      : preview.missingIgnoreRules.length ? `将保留现有 .gitignore，并补充 ${preview.missingIgnoreRules.length} 条建议规则。`
+      : "现有 .gitignore 已包含建议规则。";
     body.createEl("p", { text: `将保留本地 ${preview.localFiles.length} 个文件，并接入远端 ${preview.remoteFiles.length} 个文件。${ignoreSummary}` });
     if (preview.nestedRepos.length) body.createEl("p", {
       text: `已识别 ${preview.nestedRepos.length} 个内嵌仓库；${this.plugin.settings.setupComplete ? "下次同步" : "完成接入"}时将重建主仓库对小库文件的追踪，并忽略小库的 .git 元数据。`,
@@ -3446,12 +3608,10 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     if (preview.localRoot) {
       const trackingChoice = this.plugin.getSetupTrackingChoice();
       body.createEl("p", { text: trackingChoice === "rebuild"
-        ? `将取消全部 Git 追踪并按最终 .gitignore 重建索引。本机文件保留；被忽略的文件不会重新加入，推送后从远端当前版本移除，旧提交历史仍保留。正在编辑的插件改动会跳过本次提交。`
+        ? "已选择按忽略规则重建追踪。本机文件保留；下次推送后，被忽略文件会从 GitHub 当前版本退出。"
         : trackingChoice === "keep"
-          ? "你已选择保留现有追踪；已跟踪的忽略文件仍会继续同步。"
-          : preview.trackedExcludedLocal.length || preview.trackedExcludedRemote.length
-            ? "请返回第 3 步，选择如何处理已跟踪的忽略文件。"
-            : "未选择重建；将保留现有追踪。如需用重建纠错，请返回第 3 步选择。" });
+          ? "已选择暂时保留现有追踪；已提交的本机状态仍会继续同步。"
+          : "本次保持现有追踪；如需清理已提交的本机文件，可在 Git 同步设置中检查并修复。", cls: "zoey-sync-section-desc" });
       if (trackingChoice === "rebuild" && !this.plugin.settings.setupComplete) {
         new Setting(body).setName("确认重建 Git 追踪")
           .setDesc("我确认取消全部追踪并按 .gitignore 重建；本机文件保留，被忽略文件会从远端当前版本移除。")
@@ -3502,6 +3662,23 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         .setValue(this.plugin.settings.showVersionViewSwitcher)
         .onChange((value) => void this.plugin.setVersionViewSwitcher(value))
     );
+
+    advancedBody.createEl("h4", { text: "文件追踪", cls: "zoey-sync-subsection-title" });
+    new Setting(advancedBody).setName("按忽略规则修复追踪")
+      .setDesc("先检查 .gitignore 和已追踪文件，再只让应忽略的文件退出 Git 跟踪。本机文件保留；不会立即 Commit 或 Push。若有未解决的合并冲突，请先处理。")
+      .addButton((button) => button.setButtonText("检查并修复文件追踪").setDisabled(preview).onClick(async () => {
+        button.setDisabled(true);
+        button.setButtonText("正在检查…");
+        try {
+          const result = await this.plugin.inspectFileTracking();
+          new FileTrackingModal(this.app, this.plugin, result).open();
+        } catch (error) {
+          new Notice(`Simple Link：无法检查文件追踪。${messageOf(error)}`, 10000);
+        } finally {
+          button.setDisabled(false);
+          button.setButtonText("检查并修复文件追踪");
+        }
+      }));
 
     advancedBody.createEl("h4", { text: "同步时间设置", cls: "zoey-sync-subsection-title" });
     new Setting(advancedBody)

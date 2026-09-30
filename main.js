@@ -86,6 +86,7 @@ function matchesIgnorePattern(path2, rawPattern) {
 }
 function shouldIgnore(path2, patterns = DEFAULT_SYNC_IGNORE_PATTERNS) {
   const normalized = path2.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
+  if (normalized === ".obsidian/plugins/simple-link/data.json") return true;
   let ignored = false;
   for (const rawPattern of patterns) {
     const pattern = rawPattern.trim();
@@ -665,6 +666,7 @@ var SETUP_GITIGNORE = [
   ".obsidian/plugins/simple-one-sync/data.json",
   ".obsidian/plugins/obsidian-git/data.json",
   ".obsidian/plugins/recent-files-obsidian/data.json",
+  ".obsidian/plugins/simple-link/data.json",
   ".codex/output/",
   ".codex/AGENTS.md",
   ".claudian/sessions/",
@@ -2461,6 +2463,48 @@ ${command.body}` : ""}`, 8e3);
   setup() {
     return new GitSetup(this.vaultBasePath(), (program, args, timeoutMs, onOutput, stdinText, signal) => this.exec(program, args, program === "git" && (args[0] === "fetch" || args[0] === "push"), true, timeoutMs, onOutput, stdinText, signal));
   }
+  async inspectFileTracking() {
+    if (import_obsidian2.Platform.isMobile || !this.settings.setupComplete) throw new Error("\u8BF7\u5148\u5B8C\u6210\u7535\u8111\u7AEF Git \u63A5\u5165");
+    const nodeRequire3 = globalThis.require;
+    if (!nodeRequire3) throw new Error("\u6587\u4EF6\u8FFD\u8E2A\u68C0\u67E5\u4EC5\u652F\u6301\u7535\u8111\u7AEF");
+    const fs2 = nodeRequire3("fs").promises;
+    const path2 = nodeRequire3("path");
+    const vaultPath = this.vaultBasePath();
+    const root = (await this.gitRaw(["rev-parse", "--show-toplevel"])).trim();
+    if ((await fs2.realpath(root)).toLowerCase() !== (await fs2.realpath(vaultPath)).toLowerCase()) {
+      throw new Error("\u5F53\u524D Vault \u4E0D\u662F\u72EC\u7ACB\u7684 Git \u4ED3\u5E93\uFF0C\u65E0\u6CD5\u4FEE\u590D\u6587\u4EF6\u8FFD\u8E2A");
+    }
+    await this.ensureNormalGitState();
+    let existingIgnore = "";
+    try {
+      existingIgnore = await fs2.readFile(path2.join(vaultPath, ".gitignore"), "utf8");
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const tracked = (await this.gitRaw(["ls-files", "--cached", "-z"])).split("\0").filter(Boolean);
+    const ignored = (await this.gitRaw(["ls-files", "-ci", "--exclude-standard", "-z"])).split("\0").filter(Boolean);
+    const nestedRepos = await findNestedRepos(vaultPath);
+    const nestedData = new Set((await nestedRepoFiles(vaultPath, nestedRepos, (args) => this.gitRaw(args))).filter((name) => nestedRepos.some((repo) => name === `${repo.directory}/data.json`)));
+    const paths = [.../* @__PURE__ */ new Set([
+      ...ignored.filter((file) => !nestedData.has(file)),
+      ...tracked.filter((file) => shouldIgnore(file, SETUP_GITIGNORE))
+    ])].filter((file) => file !== ".gitignore").sort();
+    return { paths, missingRules: missingSetupIgnoreRules(existingIgnore) };
+  }
+  async repairFileTracking(preview) {
+    let repaired = 0;
+    await this.enqueueDesktopGit(async () => {
+      const current = await this.inspectFileTracking();
+      if (JSON.stringify(current) !== JSON.stringify(preview)) throw new Error("\u6587\u4EF6\u8FFD\u8E2A\u72B6\u6001\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u68C0\u67E5\u540E\u518D\u4FEE\u590D");
+      await this.setup().appendIgnore([]);
+      const ignored = (await this.gitRaw(["ls-files", "-ci", "--exclude-standard", "-z"])).split("\0").filter((file) => file && file !== ".gitignore");
+      if (preview.paths.some((file) => !ignored.includes(file))) throw new Error("\u90E8\u5206\u6587\u4EF6\u4ECD\u672A\u88AB .gitignore \u6392\u9664\uFF0C\u5DF2\u505C\u6B62\u79FB\u9664 Git \u8DDF\u8E2A");
+      for (const batch of pathBatches(preview.paths)) await this.git(["rm", "-f", "--cached", "--", ...batch]);
+      repaired = preview.paths.length;
+      return repaired > 0 || preview.missingRules.length > 0;
+    }, "\u4FEE\u590D\u6587\u4EF6\u8FFD\u8E2A");
+    return repaired;
+  }
   async beginSetup() {
     if (this.syncing) throw new Error("\u5F53\u524D\u6709\u540C\u6B65\u4EFB\u52A1\u6B63\u5728\u8FD0\u884C\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5");
     await this.desktopGitQueue;
@@ -2946,6 +2990,51 @@ var CreatePrivateRepositoryModal = class extends import_obsidian2.Modal {
       }
     });
     figure.createEl("figcaption", { text: "\u56FE\u7247\u4EC5\u4F5C\u53C2\u8003\uFF1BGitHub \u9875\u9762\u5E03\u5C40\u53EF\u80FD\u66F4\u65B0\uFF0C\u8BF7\u4EE5\u9875\u9762\u4E0A\u7684\u5B57\u6BB5\u540D\u79F0\u4E3A\u51C6\u3002" });
+  }
+};
+var FileTrackingModal = class extends import_obsidian2.Modal {
+  constructor(app, plugin, preview) {
+    super(app);
+    this.plugin = plugin;
+    this.preview = preview;
+    this.running = false;
+  }
+  onOpen() {
+    this.modalEl.addClass("zoey-sync-tracking-modal");
+    const body = this.contentEl;
+    body.empty();
+    body.createEl("h2", { text: "\u68C0\u67E5\u5E76\u4FEE\u590D\u6587\u4EF6\u8FFD\u8E2A", cls: "zoey-sync-tracking-title" });
+    body.createEl("p", { text: `\u5F85\u8865\u5145 ${this.preview.missingRules.length} \u6761\u5FFD\u7565\u89C4\u5219\uFF1B${this.preview.paths.length} \u4E2A\u5DF2\u8FFD\u8E2A\u6587\u4EF6\u5E94\u6539\u4E3A\u4EC5\u672C\u673A\u4FDD\u7559\u3002`, cls: "zoey-sync-tracking-summary" });
+    body.createEl("p", { text: "\u4FEE\u590D\u53EA\u8C03\u6574\u8FD9\u4E9B\u6587\u4EF6\u7684 Git \u8DDF\u8E2A\uFF0C\u5E76\u8865\u9F50\u7F3A\u5C11\u7684 .gitignore \u89C4\u5219\u3002\u672C\u673A\u6587\u4EF6\u548C Git \u5386\u53F2\u90FD\u4F1A\u4FDD\u7559\uFF1B\u4E0B\u4E00\u6B21 Commit\u3001Push \u540E\uFF0C\u6587\u4EF6\u4F1A\u4ECE\u8FDC\u7AEF\u5F53\u524D\u7248\u672C\u9000\u51FA\u3002", cls: "zoey-sync-tracking-description" });
+    if (this.preview.missingRules.length) {
+      const rules = body.createEl("details", { cls: "zoey-sync-tracking-details" });
+      rules.createEl("summary", { text: `\u67E5\u770B\u5F85\u8865\u5145\u7684\u89C4\u5219\uFF08${this.preview.missingRules.length}\uFF09` });
+      rules.createEl("pre", { text: this.preview.missingRules.join("\n"), cls: "zoey-sync-tracking-preview" });
+    }
+    if (this.preview.paths.length) {
+      const files = body.createEl("details", { cls: "zoey-sync-tracking-details" });
+      files.createEl("summary", { text: `\u67E5\u770B\u5C06\u505C\u6B62\u8FFD\u8E2A\u7684\u6587\u4EF6\uFF08${this.preview.paths.length}\uFF09` });
+      files.createEl("pre", { text: this.preview.paths.join("\n"), cls: "zoey-sync-tracking-preview" });
+    }
+    const actions = body.createDiv({ cls: "modal-button-container" });
+    actions.createEl("button", { text: "\u5173\u95ED" }).addEventListener("click", () => this.close());
+    const apply = actions.createEl("button", { text: "\u5E94\u7528\u4FEE\u590D", cls: "mod-cta" });
+    apply.disabled = this.preview.paths.length === 0 && this.preview.missingRules.length === 0;
+    apply.addEventListener("click", () => {
+      if (this.running) return;
+      this.running = true;
+      apply.disabled = true;
+      apply.setText("\u6B63\u5728\u4FEE\u590D\u2026");
+      void this.plugin.repairFileTracking(this.preview).then((count) => {
+        new import_obsidian2.Notice(`Simple Link\uFF1A\u5DF2\u8BA9 ${count} \u4E2A\u6587\u4EF6\u9000\u51FA Git \u8DDF\u8E2A\uFF1B\u672C\u673A\u6587\u4EF6\u5DF2\u4FDD\u7559`);
+        this.close();
+      }).catch((error) => {
+        new import_obsidian2.Notice(`Simple Link\uFF1A\u4FEE\u590D\u5931\u8D25\u3002${messageOf2(error)}`, 1e4);
+        apply.setText("\u8BF7\u5173\u95ED\u540E\u91CD\u65B0\u68C0\u67E5");
+      }).finally(() => {
+        this.running = false;
+      });
+    });
   }
 };
 var GitRepairModal = class extends import_obsidian2.Modal {
@@ -3570,11 +3659,11 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
       return;
     }
     if (this.desktopPage === "beginner-desktop") {
-      this.displayDevicePreview(containerEl, "从创建仓库开始：电脑端同步", "请在电脑端打开此引导，完成 GitHub 授权、仓库接入与两端检查。");
+      this.displayDevicePreview(containerEl, "\u4ECE\u521B\u5EFA\u4ED3\u5E93\u5F00\u59CB\uFF1A\u7535\u8111\u7AEF\u540C\u6B65", "\u8BF7\u5728\u7535\u8111\u7AEF\u6253\u5F00\u6B64\u5F15\u5BFC\uFF0C\u5B8C\u6210 GitHub \u6388\u6743\u3001\u4ED3\u5E93\u63A5\u5165\u4E0E\u4E24\u7AEF\u68C0\u67E5\u3002");
       return;
     }
     if (this.desktopPage === "beginner-server") {
-      this.displayDevicePreview(containerEl, "从零开始的服务器端同步指南", "服务器端接入引导将在这里补充。");
+      this.displayDevicePreview(containerEl, "\u4ECE\u96F6\u5F00\u59CB\u7684\u670D\u52A1\u5668\u7AEF\u540C\u6B65\u6307\u5357", "\u670D\u52A1\u5668\u7AEF\u63A5\u5165\u5F15\u5BFC\u5C06\u5728\u8FD9\u91CC\u8865\u5145\u3002");
       return;
     }
     if (this.desktopPage === "mobile") {
@@ -3652,10 +3741,7 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
     button.createSpan({ text: "\u7CFB\u7EDF\u8BC6\u522B \xB7 \u5F53\u524D\u8BBE\u5907", cls: "zoey-sync-device-badge" });
   }
   addBeginnerLink(parent, title, icon, page) {
-    const button = parent.createEl("button", {
-      cls: "zoey-sync-page-link zoey-sync-beginner-link",
-      attr: { type: "button" }
-    });
+    const button = parent.createEl("button", { cls: "zoey-sync-page-link zoey-sync-beginner-link", attr: { type: "button" } });
     (0, import_obsidian2.setIcon)(button.createSpan({ cls: "zoey-sync-page-link__icon" }), icon);
     button.createSpan({ text: title, cls: "zoey-sync-page-link__title" });
     button.addEventListener("click", () => {
@@ -3674,26 +3760,26 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
     this.setupRepoMode = "existing";
   }
   displayBeginner(containerEl) {
-    containerEl.createEl("h3", { text: "入门小助手", cls: "zoey-sync-section-title" });
-    containerEl.createEl("p", { text: "从创建仓库开始，按设备查看接入步骤。", cls: "zoey-sync-section-desc" });
+    containerEl.createEl("h3", { text: "\u5165\u95E8\u5C0F\u52A9\u624B", cls: "zoey-sync-section-title" });
+    containerEl.createEl("p", { text: "\u4ECE\u521B\u5EFA\u4ED3\u5E93\u5F00\u59CB\uFF0C\u6309\u8BBE\u5907\u67E5\u770B\u63A5\u5165\u6B65\u9AA4\u3002", cls: "zoey-sync-section-desc" });
     const links = containerEl.createDiv({ cls: "zoey-sync-beginner-links" });
-    this.addBeginnerLink(links, "电脑端同步引导", "monitor", import_obsidian2.Platform.isMobile ? "beginner-desktop" : "setup");
-    this.addBeginnerLink(links, "手机端同步引导", "smartphone", "beginner-mobile");
-    this.addBeginnerLink(links, "服务器端同步引导", "server", "beginner-server");
+    this.addBeginnerLink(links, "\u7535\u8111\u7AEF\u540C\u6B65\u5F15\u5BFC", "monitor", import_obsidian2.Platform.isMobile ? "beginner-desktop" : "setup");
+    this.addBeginnerLink(links, "\u624B\u673A\u7AEF\u540C\u6B65\u5F15\u5BFC", "smartphone", "beginner-mobile");
+    this.addBeginnerLink(links, "\u670D\u52A1\u5668\u7AEF\u540C\u6B65\u5F15\u5BFC", "server", "beginner-server");
   }
   displayBeginnerMobile(containerEl) {
-    this.displayDevicePreview(containerEl, "手机端同步引导", "先在电脑上取得 GitHub Token，再到手机端完成接入。");
+    this.displayDevicePreview(containerEl, "\u624B\u673A\u7AEF\u540C\u6B65\u5F15\u5BFC", "\u5148\u5728\u7535\u8111\u4E0A\u53D6\u5F97 GitHub Token\uFF0C\u518D\u5230\u624B\u673A\u7AEF\u5B8C\u6210\u63A5\u5165\u3002");
     const columns = containerEl.createDiv({ cls: "zoey-sync-mobile-guide" });
     const beforeToken = columns.createDiv({ cls: "zoey-sync-mobile-guide__card" });
-    beforeToken.createEl("h3", { text: "我尚未获取 Token", cls: "zoey-sync-mobile-guide__title" });
-    beforeToken.createEl("p", { text: "需在已接入仓库的电脑端操作。" });
+    beforeToken.createEl("h3", { text: "\u6211\u5C1A\u672A\u83B7\u53D6 Token", cls: "zoey-sync-mobile-guide__title" });
+    beforeToken.createEl("p", { text: "\u9700\u5728\u5DF2\u63A5\u5165\u4ED3\u5E93\u7684\u7535\u8111\u7AEF\u64CD\u4F5C\u3002" });
     if (this.plugin.settings.setupComplete) {
-      beforeToken.createEl("p", { text: "✓ 电脑端首次接入已完成，可以继续检查登录并获取 Token。", cls: "zoey-sync-mobile-guide__ready" });
+      beforeToken.createEl("p", { text: "\u2713 \u7535\u8111\u7AEF\u9996\u6B21\u63A5\u5165\u5DF2\u5B8C\u6210\uFF0C\u53EF\u4EE5\u7EE7\u7EED\u68C0\u67E5\u767B\u5F55\u5E76\u83B7\u53D6 Token\u3002", cls: "zoey-sync-mobile-guide__ready" });
     } else {
       const setupHint = beforeToken.createDiv({ cls: "zoey-sync-mobile-guide__setup-hint" });
-      setupHint.createSpan({ text: "请先完成电脑端首次接入。" });
+      setupHint.createSpan({ text: "\u8BF7\u5148\u5B8C\u6210\u7535\u8111\u7AEF\u9996\u6B21\u63A5\u5165\u3002" });
       if (!import_obsidian2.Platform.isMobile) {
-        const setupLink = setupHint.createEl("button", { text: "打开电脑端引导", attr: { type: "button" } });
+        const setupLink = setupHint.createEl("button", { text: "\u6253\u5F00\u7535\u8111\u7AEF\u5F15\u5BFC", attr: { type: "button" } });
         setupLink.addEventListener("click", () => {
           this.prepareSetupGuide();
           this.desktopPage = "setup";
@@ -3702,43 +3788,43 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
       }
     }
     const loginStep = beforeToken.createDiv({ cls: "zoey-sync-mobile-guide__step" });
-    loginStep.createEl("h4", { text: "第一步：确认登录状态" });
-    loginStep.createEl("p", { text: "检查 GitHub CLI 当前账号是否仍可登录。" });
-    const checkButton = loginStep.createEl("button", { text: "检查登录状态", attr: { type: "button" } });
+    loginStep.createEl("h4", { text: "\u7B2C\u4E00\u6B65\uFF1A\u786E\u8BA4\u767B\u5F55\u72B6\u6001" });
+    loginStep.createEl("p", { text: "\u68C0\u67E5 GitHub CLI \u5F53\u524D\u8D26\u53F7\u662F\u5426\u4ECD\u53EF\u767B\u5F55\u3002" });
+    const checkButton = loginStep.createEl("button", { text: "\u68C0\u67E5\u767B\u5F55\u72B6\u6001", attr: { type: "button" } });
     const tokenStep = beforeToken.createDiv({ cls: "zoey-sync-mobile-guide__step" });
-    tokenStep.createEl("h4", { text: "第二步：获取 Token" });
-    tokenStep.createEl("p", { text: "检查当前账号对已接入仓库的写入权限，再复制电脑端 GitHub CLI 使用的 Token。它可能同时拥有其他仓库权限，请妥善保存，勿发给他人。" });
-    const tokenButton = tokenStep.createEl("button", { text: "检查权限、生成并复制 Token", attr: { type: "button" } });
+    tokenStep.createEl("h4", { text: "\u7B2C\u4E8C\u6B65\uFF1A\u83B7\u53D6 Token" });
+    tokenStep.createEl("p", { text: "\u68C0\u67E5\u5F53\u524D\u8D26\u53F7\u5BF9\u5DF2\u63A5\u5165\u4ED3\u5E93\u7684\u5199\u5165\u6743\u9650\uFF0C\u518D\u590D\u5236\u7535\u8111\u7AEF GitHub CLI \u4F7F\u7528\u7684 Token\u3002\u5B83\u53EF\u80FD\u540C\u65F6\u62E5\u6709\u5176\u4ED6\u4ED3\u5E93\u6743\u9650\uFF0C\u8BF7\u59A5\u5584\u4FDD\u5B58\uFF0C\u52FF\u53D1\u7ED9\u4ED6\u4EBA\u3002" });
+    const tokenButton = tokenStep.createEl("button", { text: "\u68C0\u67E5\u6743\u9650\u3001\u751F\u6210\u5E76\u590D\u5236 Token", attr: { type: "button" } });
     const result = beforeToken.createEl("p", { cls: "zoey-sync-mobile-guide__result", attr: { role: "status", "aria-live": "polite" } });
     const tokenDisplay = beforeToken.createDiv({ cls: "zoey-sync-mobile-guide__token" });
     tokenDisplay.hidden = true;
-    tokenDisplay.createEl("div", { text: "GitHub Token（明文）", cls: "zoey-sync-mobile-guide__token-label" });
+    tokenDisplay.createEl("div", { text: "GitHub Token\uFF08\u660E\u6587\uFF09", cls: "zoey-sync-mobile-guide__token-label" });
     const tokenRow = tokenDisplay.createDiv({ cls: "zoey-sync-mobile-guide__token-row" });
     const tokenText = tokenRow.createEl("code", { cls: "zoey-sync-mobile-guide__token-text" });
-    const copyToken = tokenRow.createEl("button", { cls: "clickable-icon zoey-sync-mobile-guide__copy", attr: { type: "button", title: "复制 Token", "aria-label": "复制 Token" } });
+    const copyToken = tokenRow.createEl("button", { cls: "clickable-icon zoey-sync-mobile-guide__copy", attr: { type: "button", title: "\u590D\u5236 Token", "aria-label": "\u590D\u5236 Token" } });
     (0, import_obsidian2.setIcon)(copyToken, "copy");
-    tokenDisplay.createEl("p", { text: "本插件不会保存 Token。关闭此页面后，明文会消失；需要时请重新检查权限并获取 Token。", cls: "zoey-sync-mobile-guide__token-note" });
+    tokenDisplay.createEl("p", { text: "\u672C\u63D2\u4EF6\u4E0D\u4F1A\u4FDD\u5B58 Token\u3002\u5173\u95ED\u6B64\u9875\u9762\u540E\uFF0C\u660E\u6587\u4F1A\u6D88\u5931\uFF1B\u9700\u8981\u65F6\u8BF7\u91CD\u65B0\u68C0\u67E5\u6743\u9650\u5E76\u83B7\u53D6 Token\u3002", cls: "zoey-sync-mobile-guide__token-note" });
     let tokenOnPage = "";
     copyToken.addEventListener("click", () => void (async () => {
       try {
         await navigator.clipboard.writeText(tokenOnPage);
-        result.setText("Token 已再次复制到剪贴板。");
+        result.setText("Token \u5DF2\u518D\u6B21\u590D\u5236\u5230\u526A\u8D34\u677F\u3002");
       } catch {
-        result.setText("复制失败，请从下方明文手动复制 Token。");
+        result.setText("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u4ECE\u4E0B\u65B9\u660E\u6587\u624B\u52A8\u590D\u5236 Token\u3002");
       }
     })());
     const desktop = !import_obsidian2.Platform.isMobile;
     checkButton.disabled = !desktop;
     tokenButton.disabled = !desktop;
-    if (!desktop) result.setText("请在电脑端打开本页完成前两步。");
+    if (!desktop) result.setText("\u8BF7\u5728\u7535\u8111\u7AEF\u6253\u5F00\u672C\u9875\u5B8C\u6210\u524D\u4E24\u6B65\u3002");
     const run = async (action) => {
       checkButton.disabled = true;
       tokenButton.disabled = true;
-      result.setText("正在检查…");
+      result.setText("\u6B63\u5728\u68C0\u67E5\u2026");
       try {
         await action();
       } catch (error) {
-        result.setText(`操作失败：${messageOf(error)}`);
+        result.setText(`\u64CD\u4F5C\u5931\u8D25\uFF1A${messageOf2(error)}`);
       } finally {
         checkButton.disabled = false;
         tokenButton.disabled = false;
@@ -3746,7 +3832,7 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
     };
     checkButton.addEventListener("click", () => void run(async () => {
       await this.plugin.exec("gh", ["auth", "status", "--active", "--hostname", "github.com"]);
-      result.setText("GitHub 登录状态正常。可继续获取 Token。");
+      result.setText("GitHub \u767B\u5F55\u72B6\u6001\u6B63\u5E38\u3002\u53EF\u7EE7\u7EED\u83B7\u53D6 Token\u3002");
     }));
     tokenButton.addEventListener("click", () => void run(async () => {
       tokenOnPage = "";
@@ -3754,47 +3840,47 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
       tokenDisplay.hidden = true;
       await this.plugin.exec("gh", ["auth", "status", "--active", "--hostname", "github.com"]);
       const remote = this.plugin.settings.setupRepoUrl || this.plugin.settings.gitRemoteUrl;
-      if (!remote) throw new Error("请先完成电脑端 GitHub 仓库接入。");
+      if (!remote) throw new Error("\u8BF7\u5148\u5B8C\u6210\u7535\u8111\u7AEF GitHub \u4ED3\u5E93\u63A5\u5165\u3002");
       const { owner, name } = parseGithubRepoUrl(remote);
       const canPush = await this.plugin.exec("gh", ["api", `repos/${owner}/${name}`, "--jq", ".permissions.push"]);
-      if (canPush.trim() !== "true") throw new Error("当前 GitHub 账号没有该仓库的写入权限。");
+      if (canPush.trim() !== "true") throw new Error("\u5F53\u524D GitHub \u8D26\u53F7\u6CA1\u6709\u8BE5\u4ED3\u5E93\u7684\u5199\u5165\u6743\u9650\u3002");
       const token = (await this.plugin.exec("gh", ["auth", "token", "--hostname", "github.com"])).trim();
-      if (!token) throw new Error("GitHub CLI 未返回 Token。");
+      if (!token) throw new Error("GitHub CLI \u672A\u8FD4\u56DE Token\u3002");
       tokenOnPage = token;
       tokenText.setText(token);
       tokenDisplay.hidden = false;
       try {
         await navigator.clipboard.writeText(token);
-        result.setText("已确认仓库写入权限，Token 已复制到剪贴板，并在下方显示。");
+        result.setText("\u5DF2\u786E\u8BA4\u4ED3\u5E93\u5199\u5165\u6743\u9650\uFF0CToken \u5DF2\u590D\u5236\u5230\u526A\u8D34\u677F\uFF0C\u5E76\u5728\u4E0B\u65B9\u663E\u793A\u3002");
       } catch {
-        result.setText("已确认仓库写入权限，Token 已在下方显示；自动复制失败，请手动复制。");
+        result.setText("\u5DF2\u786E\u8BA4\u4ED3\u5E93\u5199\u5165\u6743\u9650\uFF0CToken \u5DF2\u5728\u4E0B\u65B9\u663E\u793A\uFF1B\u81EA\u52A8\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u590D\u5236\u3002");
       }
     }));
     const hasToken = columns.createDiv({ cls: "zoey-sync-mobile-guide__card" });
-    hasToken.createEl("h3", { text: "我已获取 Token", cls: "zoey-sync-mobile-guide__title" });
-    hasToken.createEl("p", { text: "在手机端操作。" });
-    hasToken.createEl("p", { text: "手机端 Token 填写与同步配置将在轻量版 Git 功能完成后提供。", cls: "zoey-sync-mobile-guide__placeholder" });
+    hasToken.createEl("h3", { text: "\u6211\u5DF2\u83B7\u53D6 Token", cls: "zoey-sync-mobile-guide__title" });
+    hasToken.createEl("p", { text: "\u5728\u624B\u673A\u7AEF\u64CD\u4F5C\u3002" });
+    hasToken.createEl("p", { text: "\u624B\u673A\u7AEF Token \u586B\u5199\u4E0E\u540C\u6B65\u914D\u7F6E\u5C06\u5728\u8F7B\u91CF\u7248 Git \u529F\u80FD\u5B8C\u6210\u540E\u63D0\u4F9B\u3002", cls: "zoey-sync-mobile-guide__placeholder" });
   }
   displayDesktopSettings(containerEl) {
     const page = containerEl.createDiv({ cls: "zoey-sync-setup-layout" });
     const header = page.createDiv({ cls: "zoey-sync-page-header zoey-sync-setup-header" });
-    const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", title: "返回", "aria-label": "返回设备同步" } });
+    const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", title: "\u8FD4\u56DE", "aria-label": "\u8FD4\u56DE\u8BBE\u5907\u540C\u6B65" } });
     (0, import_obsidian2.setIcon)(back, "arrow-left");
     back.addEventListener("click", () => {
       this.desktopPage = "root";
       this.display();
     });
-    header.createEl("h2", { text: "电脑端 Git 同步", cls: "zoey-sync-page-title" });
+    header.createEl("h2", { text: "\u7535\u8111\u7AEF Git \u540C\u6B65", cls: "zoey-sync-page-title" });
     this.displayDesktopAdvanced(page);
   }
   displayDesktop(containerEl) {
     const currentDevice = this.currentDevice();
-    containerEl.createEl("h3", { text: "设不同设备同步设置", cls: "zoey-sync-section-title" });
+    containerEl.createEl("h3", { text: "\u8BBE\u4E0D\u540C\u8BBE\u5907\u540C\u6B65\u8BBE\u7F6E", cls: "zoey-sync-section-title" });
     containerEl.createEl("p", { text: "\u5DF2\u81EA\u52A8\u8BC6\u522B\u5F53\u524D\u8BBE\u5907\uFF0C\u5E76\u505C\u7528\u5176\u4ED6\u5E73\u53F0\u7684\u540C\u6B65\u8BBE\u7F6E\u3002", cls: "zoey-sync-section-desc" });
     this.addSetupEntry(containerEl, currentDevice === "git");
     const entries = [
-      { page: "mobile", title: "手机端 轻量 Git 同步设置", desc: "Android / iOS · 轻量版 Git 同步", icon: "smartphone" },
-      { page: "server", title: "服务器端 脚本 Git 同步设置", desc: "Linux · 服务器同步设置", icon: "server" }
+      { page: "mobile", title: "\u624B\u673A\u7AEF \u8F7B\u91CF Git \u540C\u6B65\u8BBE\u7F6E", desc: "Android / iOS \xB7 \u8F7B\u91CF\u7248 Git \u540C\u6B65", icon: "smartphone" },
+      { page: "server", title: "\u670D\u52A1\u5668\u7AEF \u811A\u672C Git \u540C\u6B65\u8BBE\u7F6E", desc: "Linux \xB7 \u670D\u52A1\u5668\u540C\u6B65\u8BBE\u7F6E", icon: "server" }
     ];
     for (const entry of entries) {
       const isCurrent = currentDevice === entry.page;
@@ -3817,12 +3903,12 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
       }
     }
   }
-  displayDevicePreview(containerEl, title, description, backPage = "root") {
+  displayDevicePreview(containerEl, title, description) {
     const header = containerEl.createDiv({ cls: "zoey-sync-page-header" });
-    const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", "aria-label": "返回" } });
+    const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", "aria-label": "\u8FD4\u56DE" } });
     (0, import_obsidian2.setIcon)(back, "arrow-left");
     back.addEventListener("click", () => {
-      this.desktopPage = backPage;
+      this.desktopPage = "root";
       this.display();
     });
     header.createEl("h2", { text: title, cls: "zoey-sync-page-title" });
@@ -3851,8 +3937,8 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
     button.disabled = !isCurrent;
     (0, import_obsidian2.setIcon)(button.createSpan({ cls: "zoey-sync-page-link__icon" }), "monitor");
     const copy = button.createSpan({ cls: "zoey-sync-page-link__copy" });
-    copy.createSpan({ text: "电脑端 Git 同步设置", cls: "zoey-sync-page-link__title" });
-    copy.createSpan({ text: "界面、自动同步时间与 Git 设置", cls: "zoey-sync-page-link__desc" });
+    copy.createSpan({ text: "\u7535\u8111\u7AEF Git \u540C\u6B65\u8BBE\u7F6E", cls: "zoey-sync-page-link__title" });
+    copy.createSpan({ text: "\u754C\u9762\u3001\u81EA\u52A8\u540C\u6B65\u65F6\u95F4\u4E0E Git \u8BBE\u7F6E", cls: "zoey-sync-page-link__desc" });
     if (!isCurrent) return;
     this.addCurrentDeviceBadge(button);
     (0, import_obsidian2.setIcon)(button.createSpan({ cls: "zoey-sync-page-link__chevron" }), "chevron-right");
@@ -3938,8 +4024,8 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
       this.desktopPage = "root";
       this.display();
     });
-    header.createEl("h2", { text: "从创建仓库开始：电脑端同步", cls: "zoey-sync-page-title" });
-    page.createEl("p", { text: "按顺序完成四步。已核验的步骤可以随时返回查看。", cls: "zoey-sync-section-desc" });
+    header.createEl("h2", { text: "\u4ECE\u521B\u5EFA\u4ED3\u5E93\u5F00\u59CB\uFF1A\u7535\u8111\u7AEF\u540C\u6B65", cls: "zoey-sync-page-title" });
+    page.createEl("p", { text: "\u6309\u987A\u5E8F\u5B8C\u6210\u56DB\u6B65\u3002\u5DF2\u6838\u9A8C\u7684\u6B65\u9AA4\u53EF\u4EE5\u968F\u65F6\u8FD4\u56DE\u67E5\u770B\u3002", cls: "zoey-sync-section-desc" });
     const guidedDone = this.plugin.settings.setupComplete && !!this.plugin.settings.setupVerified;
     const latestConnectionLog = this.plugin.getRecentErrorLogs().find((entry) => /测试连接|Fetch|Pull|Push|同步/.test(entry.context));
     const loggedFailure = guidedDone && latestConnectionLog?.status === "error" ? latestConnectionLog : void 0;
@@ -3983,7 +4069,7 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
         void this.runSetup(() => this.plugin.beginSetup(), "\u5DF2\u6682\u505C\u81EA\u52A8 Git \u64CD\u4F5C\uFF0C\u8BF7\u4ECE\u7B2C 1 \u6B65\u5F00\u59CB\u3002");
       });
     }
-    page.createEl("h3", { text: "接入引导", cls: "zoey-sync-section-title zoey-sync-setup-guide-title" });
+    page.createEl("h3", { text: "\u63A5\u5165\u5F15\u5BFC", cls: "zoey-sync-section-title zoey-sync-setup-guide-title" });
     const panel = page.createDiv({ cls: "zoey-sync-setup-tab-panel" });
     if (!this.plugin.settings.setupComplete && this.plugin.settings.setupBackup && !this.plugin.settings.setupMutationStarted) {
       new import_obsidian2.Setting(panel).setDesc("\u9000\u51FA\u5411\u5BFC\u5E76\u6062\u590D\u4E4B\u524D\u5DF2\u914D\u7F6E\u7684\u81EA\u52A8\u540C\u6B65\u3002").addButton((button) => button.setButtonText("\u53D6\u6D88\u5411\u5BFC\uFF0C\u6062\u590D\u65E7\u540C\u6B65").onClick(() => void this.runSetup(() => this.plugin.cancelSetup(), "\u5DF2\u6062\u590D\u4E4B\u524D\u7684\u540C\u6B65\u914D\u7F6E\u3002")));
@@ -4205,8 +4291,8 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
     if (next) next.disabled = !this.setupRepoReady() || this.setupBusy;
   }
   displaySetupPreview(body) {
-    body.createEl("p", { text: `\u5F53\u524D Vault\uFF1A${this.plugin.getVaultBasePath()}` });
-    body.createEl("p", { text: "\u8FD9\u4E00\u6B65\u53EA\u68C0\u67E5\u4E24\u7AEF\u72B6\u6001\uFF1B\u53D1\u73B0\u5185\u5D4C\u4ED3\u5E93\u65F6\u4F1A\u5217\u51FA\u5F85\u8865\u7684 .git \u5FFD\u7565\u89C4\u5219\u548C\u5F85\u91CD\u5EFA\u7684\u6587\u4EF6\u8FFD\u8E2A\u3002\u5B8C\u6210\u63A5\u5165\u65F6\u6267\u884C\uFF1B\u5DF2\u63A5\u5165\u7684\u4ED3\u5E93\u4F1A\u5728\u4E0B\u6B21\u540C\u6B65\u65F6\u5904\u7406\u3002" });
+    body.createEl("p", { text: `\u5F53\u524D Vault\uFF1A${this.plugin.getVaultBasePath()}`, cls: "zoey-sync-section-desc" });
+    body.createEl("p", { text: "\u5148\u68C0\u67E5\u672C\u673A\u548C GitHub \u7684\u6587\u4EF6\u5DEE\u5F02\uFF0C\u518D\u51B3\u5B9A\u5982\u4F55\u63A5\u5165\u3002\u68C0\u67E5\u4E0D\u4F1A\u5408\u5E76\u3001\u5220\u9664\u6216\u63A8\u9001\u7B14\u8BB0\u3002", cls: "zoey-sync-section-desc" });
     if (this.plugin.settings.setupComplete && !this.plugin.settings.setupVerified) {
       body.createEl("p", { text: "\u5F53\u524D\u8FDE\u63A5\u6765\u81EA\u65E7\u7248\u8BBE\u7F6E\uFF0C\u5C1A\u672A\u7ECF\u8FC7\u6B64\u5411\u5BFC\u6838\u9A8C\u3002\u4F7F\u7528\u4E0A\u65B9\u300C\u4ECE\u7B2C\u4E00\u6B65\u91CD\u65B0\u68C0\u67E5\u63A5\u5165\u300D\u540E\u53EF\u67E5\u770B\u4E24\u7AEF\u6587\u4EF6\u3002" });
     }
@@ -4215,36 +4301,51 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
         this.setupOverlapContent = void 0;
         this.setupRebuildConfirmed = false;
         await this.plugin.inspectSetupRepository();
-      }, this.plugin.settings.setupComplete ? "\u5DF2\u91CD\u65B0\u8BFB\u53D6\u4E24\u7AEF\u72B6\u6001\u3002" : "\u68C0\u67E5\u5B8C\u6210\u3002\u8BF7\u6838\u5BF9\u7ED3\u679C\u5E76\u9009\u62E9\u540C\u540D\u6587\u4EF6\u7684\u4FDD\u7559\u7248\u672C\u3002", false)));
+      }, "", false)));
     }
     const preview = this.plugin.getSetupPreview();
     if (preview) {
+      const overview = body.createDiv({ cls: "zoey-sync-setup-overview" });
+      for (const [label, value] of [["\u672C\u673A\u6587\u4EF6", preview.localFiles.length], ["GitHub \u6587\u4EF6", preview.remoteFiles.length], ["\u4EC5\u672C\u673A", preview.localOnly.length], ["\u4EC5 GitHub", preview.remoteOnly.length], ["\u540C\u540D\u5DEE\u5F02", preview.overlaps.length]]) {
+        const item = overview.createDiv({ cls: "zoey-sync-setup-overview__item" });
+        item.createEl("strong", { text: String(value) });
+        item.createSpan({ text: label });
+      }
       if (preview.nestedRepos.length) body.createEl("p", {
-        text: `\u53D1\u73B0 ${preview.nestedRepos.length} \u4E2A\u5185\u5D4C Git \u4ED3\u5E93\u3002${this.plugin.settings.setupComplete ? "\u4E0B\u6B21\u540C\u6B65" : "\u5B8C\u6210\u63A5\u5165"}\u65F6\u4F1A\u5FFD\u7565\u5176 .git \u5143\u6570\u636E\uFF0C\u5E76\u91CD\u5EFA\u4E3B\u4ED3\u5E93\u5BF9\u5C0F\u5E93\u666E\u901A\u6587\u4EF6\u7684\u8FFD\u8E2A\uFF1B\u5C0F\u5E93\u81EA\u5DF1\u7684\u63D0\u4EA4\u5386\u53F2\u4E0D\u4F1A\u6539\u52A8\u3002`,
+        text: `\u53D1\u73B0 ${preview.nestedRepos.length} \u4E2A\u5185\u5D4C Git \u4ED3\u5E93\u3002\u53EA\u4F1A\u6392\u9664\u5B83\u4EEC\u7684 .git \u5143\u6570\u636E\uFF1B\u8FD9\u4E9B\u4ED3\u5E93\u81EA\u5DF1\u7684\u5386\u53F2\u4E0D\u53D7\u5F71\u54CD\u3002`,
         cls: "zoey-sync-section-desc"
       });
-      if (preview.alreadyLinked) body.createEl("p", { text: "\u5F53\u524D Git \u5386\u53F2\u5DF2\u5305\u542B\u8FDC\u7AEF\u63D0\u4EA4\u3002\u63A5\u5165\u65F6\u4F1A\u8865\u5145\u5FFD\u7565\u89C4\u5219\u3001\u5904\u7406\u5185\u5D4C\u4ED3\u5E93\u8FFD\u8E2A\uFF0C\u5E76\u63A8\u9001\u672C\u673A\u672A\u4E0A\u4F20\u7684\u66F4\u6539\u3002", cls: "zoey-sync-setup-done" });
-      else if (preview.relatedHistory) body.createEl("p", { text: "\u672C\u673A\u4E0E\u8FDC\u7AEF\u6709\u5171\u540C\u5386\u53F2\uFF0C\u8FDC\u7AEF\u6709\u65B0\u63D0\u4EA4\u3002\u63A5\u5165\u65F6\u4F1A\u6B63\u5E38\u5408\u5E76\uFF1B\u82E5\u53D1\u751F\u51B2\u7A81\u4F1A\u505C\u6B62\u5E76\u63D0\u793A\u5904\u7406\uFF0C\u4E0D\u4F1A\u76F4\u63A5\u8986\u76D6\u540C\u540D\u6587\u4EF6\u3002", cls: "zoey-sync-section-desc" });
-      body.createEl("p", { text: `\u672C\u5730 ${preview.localFiles.length} \u4E2A\u6587\u4EF6\uFF0C\u8FDC\u7AEF ${preview.remoteFiles.length} \u4E2A\u6587\u4EF6\uFF1B\u4EC5\u672C\u5730 ${preview.localOnly.length}\uFF0C\u4EC5\u8FDC\u7AEF ${preview.remoteOnly.length}\uFF0C\u540C\u540D\u4E14\u5185\u5BB9\u76F8\u540C ${preview.identicalCount}\uFF0C\u9700\u4EBA\u5DE5\u9009\u62E9 ${preview.overlaps.length}\u3002` });
-      body.createEl("p", { text: preview.localRoot ? `\u73B0\u6709 Git \u4ED3\u5E93\uFF1A${preview.localRoot}\uFF1B\u672C\u673A\u5206\u652F\uFF1A${preview.localBranch}\uFF1Borigin\uFF1A${preview.origin || "\u672A\u8BBE\u7F6E"}\uFF1B\u9996\u6B21\u63A8\u9001\u76EE\u6807\uFF1A${preview.branch}` : `Vault \u5C1A\u672A\u521D\u59CB\u5316 Git\uFF1B\u5B8C\u6210\u63A5\u5165\u65F6\u4F1A\u5728\u5F53\u524D Vault \u521B\u5EFA ${preview.branch} \u5206\u652F\u3002` });
+      if (preview.alreadyLinked) body.createEl("p", { text: "\u672C\u673A\u5DF2\u5305\u542B GitHub \u7684\u63D0\u4EA4\u8BB0\u5F55\uFF0C\u53EF\u4EE5\u7EE7\u7EED\u6838\u5BF9\u6587\u4EF6\u3002", cls: "zoey-sync-setup-done" });
+      else if (preview.relatedHistory) body.createEl("p", { text: "\u4E24\u7AEF\u6709\u5171\u540C\u5386\u53F2\uFF1B\u5B8C\u6210\u63A5\u5165\u65F6\u4F1A\u5408\u5E76 GitHub \u7684\u65B0\u63D0\u4EA4\uFF0C\u51B2\u7A81\u4F1A\u505C\u4E0B\u7B49\u5F85\u5904\u7406\u3002", cls: "zoey-sync-section-desc" });
+      body.createEl("p", { text: preview.localRoot ? `\u672C\u673A\u5206\u652F\uFF1A${preview.localBranch} \xB7 GitHub \u5206\u652F\uFF1A${preview.branch}` : `\u5F53\u524D Vault \u8FD8\u6CA1\u6709 Git \u4ED3\u5E93\uFF1B\u5B8C\u6210\u63A5\u5165\u65F6\u4F1A\u521B\u5EFA ${preview.branch} \u5206\u652F\u3002`, cls: "zoey-sync-section-desc" });
+      body.createEl("h4", { text: "Git \u5FFD\u7565\u89C4\u5219", cls: "zoey-sync-subsection-title" });
+      body.createEl("p", { text: `\u672C\u673A .gitignore \u76EE\u524D\u7F3A\u5C11 ${preview.missingIgnoreRules.length} \u6761\u5EFA\u8BAE\u89C4\u5219\uFF0C\u7528\u4E8E\u6392\u9664\u5DE5\u4F5C\u533A\u3001\u56DE\u6536\u7AD9\u3001\u7F13\u5B58\u548C\u63D2\u4EF6\u672C\u673A\u6570\u636E\u3002\u5B8C\u6210\u63A5\u5165\u65F6\u4F1A\u8865\u9F50\uFF1B\u82E5\u4F60\u9009\u62E9 GitHub \u7684\u540C\u540D\u6587\u4EF6\uFF0C\u4F1A\u5148\u91C7\u7528\u8FDC\u7AEF\u7248\u672C\u3002`, cls: "zoey-sync-section-desc" });
+      body.createEl("p", { text: "\u89C4\u5219\u53EA\u963B\u6B62\u4ECA\u540E\u81EA\u52A8\u52A0\u5165\u6587\u4EF6\u3002\u5DF2\u7ECF\u88AB Git \u8FFD\u8E2A\u7684\u6587\u4EF6\uFF0C\u9700\u8981\u5728\u5B8C\u6210\u63A5\u5165\u65F6\u9009\u62E9\u91CD\u5EFA\u8FFD\u8E2A\uFF1B\u672C\u673A\u6587\u4EF6\u4E0D\u4F1A\u56E0\u6B64\u5220\u9664\u3002", cls: "zoey-sync-section-desc" });
+      if (preview.missingIgnoreRules.length) {
+        const rules = body.createEl("details", { cls: "zoey-sync-setup-files" });
+        rules.createEl("summary", { text: `\u67E5\u770B\u5F85\u8865\u5145\u7684\u89C4\u5219\uFF08${preview.missingIgnoreRules.length}\uFF09` });
+        rules.createEl("pre", { text: preview.missingIgnoreRules.join("\n") });
+      }
       if (preview.localRoot && !preview.relatedHistory && preview.localBranch !== preview.branch) {
         body.createEl("p", { text: `\u672C\u673A\u5DF2\u6709\u72EC\u7ACB\u5386\u53F2\uFF0C\u5F53\u524D ${preview.localBranch} \u5206\u652F\u63A5\u5165\u540E\u4F1A\u63A8\u9001\u5230\u8FDC\u7AEF ${preview.branch} \u5206\u652F\u3002\u8BF7\u6838\u5BF9\u8FD9\u662F\u5426\u662F\u8981\u63A5\u5165\u7684\u4ED3\u5E93\u3002`, cls: "zoey-sync-section-desc" });
       }
       if (preview.localRoot) {
-        body.createEl("p", { text: `\u672C\u5730 ${preview.trackedExcludedLocal.length} \u4E2A\u3001\u8FDC\u7AEF ${preview.trackedExcludedRemote.length} \u4E2A\u5DF2\u8DDF\u8E2A\u6587\u4EF6\u7B26\u5408\u73B0\u6709\u6216\u5F85\u8865\u7684 .gitignore \u89C4\u5219\u3002\u53EF\u91CD\u5EFA\u6574\u4E2A Git \u8FFD\u8E2A\u7D22\u5F15\u4F5C\u4E3A\u7EA0\u9519\uFF1A\u5148\u53D6\u6D88\u5168\u90E8\u8FFD\u8E2A\uFF0C\u518D\u6309\u6700\u7EC8 .gitignore \u91CD\u65B0\u9010\u6587\u4EF6\u52A0\u5165\uFF1B\u672C\u673A\u6587\u4EF6\u4E0D\u4F1A\u5220\u9664\u3002` });
+        body.createEl("p", { text: `\u672C\u673A ${preview.trackedExcludedLocal.length} \u4E2A\u3001GitHub ${preview.trackedExcludedRemote.length} \u4E2A\u6587\u4EF6\u4ECD\u88AB\u8FFD\u8E2A\uFF0C\u4F46\u7B26\u5408\u5FFD\u7565\u89C4\u5219\u3002\u5DF2\u8FFD\u8E2A\u6587\u4EF6\u4E0D\u4F1A\u4EC5\u56E0\u52A0\u5165 .gitignore \u5C31\u9000\u51FA\u540C\u6B65\u3002`, cls: "zoey-sync-section-desc" });
         this.setupFileList(body, "\u672C\u5730\u5DF2\u8DDF\u8E2A\u4F46\u5EFA\u8BAE\u5FFD\u7565", preview.trackedExcludedLocal);
         this.setupFileList(body, "\u8FDC\u7AEF\u5DF2\u8DDF\u8E2A\u4F46\u5EFA\u8BAE\u5FFD\u7565", preview.trackedExcludedRemote);
-        if (!this.plugin.settings.setupComplete) {
-          new import_obsidian2.Setting(body).setName("Git \u8FFD\u8E2A\u65B9\u5F0F").setDesc("\u91CD\u5EFA\u4F1A\u6E05\u7A7A Git \u7D22\u5F15\u5E76\u91CD\u65B0\u52A0\u5165\u672A\u5FFD\u7565\u7684\u6587\u4EF6\uFF1B\u5DF2\u5FFD\u7565\u6587\u4EF6\u5C06\u505C\u6B62\u8FFD\u8E2A\uFF0C\u63A8\u9001\u540E\u4ECE\u8FDC\u7AEF\u5F53\u524D\u7248\u672C\u79FB\u9664\u3002").addDropdown((dropdown) => dropdown.addOption("", "\u8BF7\u9009\u62E9").addOption("keep", "\u4FDD\u7559\u73B0\u6709\u8FFD\u8E2A").addOption("rebuild", "\u53D6\u6D88\u5168\u90E8\u8FFD\u8E2A\u5E76\u91CD\u5EFA").setValue(this.plugin.getSetupTrackingChoice() || "").onChange((value) => {
+        if (!this.plugin.settings.setupComplete && (preview.trackedExcludedLocal.length || preview.trackedExcludedRemote.length)) {
+          new import_obsidian2.Setting(body).setName("\u5DF2\u6709\u6587\u4EF6\u7684\u8FFD\u8E2A").setDesc("\u9009\u62E9\u91CD\u5EFA\u540E\uFF0CGit \u4F1A\u6309\u6700\u7EC8\u5FFD\u7565\u89C4\u5219\u91CD\u65B0\u767B\u8BB0\u6587\u4EF6\uFF1B\u672C\u673A\u6587\u4EF6\u4FDD\u7559\uFF0C\u8FDC\u7AEF\u5F53\u524D\u7248\u672C\u4F1A\u5728\u63A8\u9001\u540E\u79FB\u9664\u88AB\u5FFD\u7565\u7684\u6587\u4EF6\u3002").addDropdown((dropdown) => dropdown.addOption("", "\u8BF7\u9009\u62E9").addOption("keep", "\u6682\u65F6\u4FDD\u7559\u73B0\u6709\u8FFD\u8E2A").addOption("rebuild", "\u6309\u5FFD\u7565\u89C4\u5219\u91CD\u5EFA\u8FFD\u8E2A").setValue(this.plugin.getSetupTrackingChoice() || "").onChange((value) => {
             this.plugin.setSetupTrackingChoice(value ? value : void 0);
             this.setupRebuildConfirmed = false;
             this.display();
           }));
         }
       }
+      body.createEl("h4", { text: "\u6587\u4EF6\u5DEE\u5F02", cls: "zoey-sync-subsection-title" });
       this.setupFileList(body, "\u4EC5\u672C\u5730\u6587\u4EF6", preview.localOnly);
       this.setupFileList(body, "\u4EC5\u8FDC\u7AEF\u6587\u4EF6", preview.remoteOnly);
-      this.setupFileList(body, "\u540C\u540D\u6587\u4EF6", preview.overlaps);
+      if (this.plugin.settings.setupComplete) this.setupFileList(body, "\u540C\u540D\u6587\u4EF6", preview.overlaps);
+      if (!preview.overlaps.length) body.createEl("p", { text: "\u6CA1\u6709\u9700\u8981\u9010\u9879\u9009\u62E9\u7684\u540C\u540D\u5DEE\u5F02\u3002", cls: "zoey-sync-setup-done" });
       if (preview.overlaps.length && !this.plugin.settings.setupComplete) {
         body.createEl("p", { text: "\u6BCF\u4E2A\u540C\u540D\u6587\u4EF6\u90FD\u8981\u660E\u786E\u9009\u62E9\u672C\u673A\u6216\u8FDC\u7AEF\u7248\u672C\u3002" });
         if (preview.overlaps.includes(".gitignore")) {
@@ -4290,6 +4391,7 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
     if (next) next.disabled = !this.setupPreviewReady() || this.setupBusy;
   }
   setupFileList(body, title, paths) {
+    if (paths.length === 0) return;
     const details = body.createEl("details", { cls: "zoey-sync-setup-files" });
     details.createEl("summary", { text: `${title}\uFF08${paths.length}\uFF09` });
     for (const path2 of paths.slice(0, 200)) details.createEl("div", { text: path2 });
@@ -4302,7 +4404,7 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
       return;
     }
     const remoteIgnoreSelected = this.plugin.getSetupChoices()[".gitignore"] === "remote";
-    const ignoreSummary = this.plugin.settings.setupComplete ? remoteIgnoreSelected ? "\u5DF2\u6309\u4F60\u7684\u9009\u62E9\u91C7\u7528\u8FDC\u7AEF .gitignore\uFF0C\u5E76\u9010\u6761\u8865\u5145\u7F3A\u5C11\u7684\u5EFA\u8BAE\u89C4\u5219\u3002" : "\u73B0\u6709\u672C\u673A .gitignore \u89C4\u5219\u5DF2\u4FDD\u7559\u3002" : remoteIgnoreSelected ? "\u4F60\u5DF2\u9009\u62E9\u8FDC\u7AEF .gitignore\uFF1A\u672C\u673A\u81EA\u5B9A\u4E49\u89C4\u5219\u5C06\u88AB\u66FF\u6362\uFF1B\u63A5\u5165\u65F6\u4F1A\u4EE5\u8FDC\u7AEF\u7248\u672C\u4E3A\u57FA\u7840\u91CD\u65B0\u9010\u6761\u68C0\u67E5\u5EFA\u8BAE\u89C4\u5219\u3002" : preview.missingIgnoreRules.length > 0 ? `\u9996\u6B21\u63D0\u4EA4\u524D\u53EA\u8865\u5145 .gitignore \u7F3A\u5C11\u7684 ${preview.missingIgnoreRules.length} \u6761\u89C4\u5219\uFF1B\u5DF2\u6709\u89C4\u5219\u4E0D\u4F1A\u88AB\u8986\u76D6\u3002` : "\u73B0\u6709 .gitignore \u5DF2\u6DB5\u76D6\u5EFA\u8BAE\u89C4\u5219\uFF0C\u4E0D\u4F1A\u8FFD\u52A0\u91CD\u590D\u89C4\u5219\u3002";
+    const ignoreSummary = remoteIgnoreSelected ? "\u5C06\u91C7\u7528 GitHub \u7684 .gitignore\uFF0C\u518D\u8865\u9F50\u7F3A\u5C11\u7684\u5EFA\u8BAE\u89C4\u5219\u3002" : preview.missingIgnoreRules.length ? `\u5C06\u4FDD\u7559\u73B0\u6709 .gitignore\uFF0C\u5E76\u8865\u5145 ${preview.missingIgnoreRules.length} \u6761\u5EFA\u8BAE\u89C4\u5219\u3002` : "\u73B0\u6709 .gitignore \u5DF2\u5305\u542B\u5EFA\u8BAE\u89C4\u5219\u3002";
     body.createEl("p", { text: `\u5C06\u4FDD\u7559\u672C\u5730 ${preview.localFiles.length} \u4E2A\u6587\u4EF6\uFF0C\u5E76\u63A5\u5165\u8FDC\u7AEF ${preview.remoteFiles.length} \u4E2A\u6587\u4EF6\u3002${ignoreSummary}` });
     if (preview.nestedRepos.length) body.createEl("p", {
       text: `\u5DF2\u8BC6\u522B ${preview.nestedRepos.length} \u4E2A\u5185\u5D4C\u4ED3\u5E93\uFF1B${this.plugin.settings.setupComplete ? "\u4E0B\u6B21\u540C\u6B65" : "\u5B8C\u6210\u63A5\u5165"}\u65F6\u5C06\u91CD\u5EFA\u4E3B\u4ED3\u5E93\u5BF9\u5C0F\u5E93\u6587\u4EF6\u7684\u8FFD\u8E2A\uFF0C\u5E76\u5FFD\u7565\u5C0F\u5E93\u7684 .git \u5143\u6570\u636E\u3002`,
@@ -4310,7 +4412,7 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
     });
     if (preview.localRoot) {
       const trackingChoice = this.plugin.getSetupTrackingChoice();
-      body.createEl("p", { text: trackingChoice === "rebuild" ? `\u5C06\u53D6\u6D88\u5168\u90E8 Git \u8FFD\u8E2A\u5E76\u6309\u6700\u7EC8 .gitignore \u91CD\u5EFA\u7D22\u5F15\u3002\u672C\u673A\u6587\u4EF6\u4FDD\u7559\uFF1B\u88AB\u5FFD\u7565\u7684\u6587\u4EF6\u4E0D\u4F1A\u91CD\u65B0\u52A0\u5165\uFF0C\u63A8\u9001\u540E\u4ECE\u8FDC\u7AEF\u5F53\u524D\u7248\u672C\u79FB\u9664\uFF0C\u65E7\u63D0\u4EA4\u5386\u53F2\u4ECD\u4FDD\u7559\u3002\u6B63\u5728\u7F16\u8F91\u7684\u63D2\u4EF6\u6539\u52A8\u4F1A\u8DF3\u8FC7\u672C\u6B21\u63D0\u4EA4\u3002` : trackingChoice === "keep" ? "\u4F60\u5DF2\u9009\u62E9\u4FDD\u7559\u73B0\u6709\u8FFD\u8E2A\uFF1B\u5DF2\u8DDF\u8E2A\u7684\u5FFD\u7565\u6587\u4EF6\u4ECD\u4F1A\u7EE7\u7EED\u540C\u6B65\u3002" : preview.trackedExcludedLocal.length || preview.trackedExcludedRemote.length ? "\u8BF7\u8FD4\u56DE\u7B2C 3 \u6B65\uFF0C\u9009\u62E9\u5982\u4F55\u5904\u7406\u5DF2\u8DDF\u8E2A\u7684\u5FFD\u7565\u6587\u4EF6\u3002" : "\u672A\u9009\u62E9\u91CD\u5EFA\uFF1B\u5C06\u4FDD\u7559\u73B0\u6709\u8FFD\u8E2A\u3002\u5982\u9700\u7528\u91CD\u5EFA\u7EA0\u9519\uFF0C\u8BF7\u8FD4\u56DE\u7B2C 3 \u6B65\u9009\u62E9\u3002" });
+      body.createEl("p", { text: trackingChoice === "rebuild" ? "\u5DF2\u9009\u62E9\u6309\u5FFD\u7565\u89C4\u5219\u91CD\u5EFA\u8FFD\u8E2A\u3002\u672C\u673A\u6587\u4EF6\u4FDD\u7559\uFF1B\u4E0B\u6B21\u63A8\u9001\u540E\uFF0C\u88AB\u5FFD\u7565\u6587\u4EF6\u4F1A\u4ECE GitHub \u5F53\u524D\u7248\u672C\u9000\u51FA\u3002" : trackingChoice === "keep" ? "\u5DF2\u9009\u62E9\u6682\u65F6\u4FDD\u7559\u73B0\u6709\u8FFD\u8E2A\uFF1B\u5DF2\u63D0\u4EA4\u7684\u672C\u673A\u72B6\u6001\u4ECD\u4F1A\u7EE7\u7EED\u540C\u6B65\u3002" : "\u672C\u6B21\u4FDD\u6301\u73B0\u6709\u8FFD\u8E2A\uFF1B\u5982\u9700\u6E05\u7406\u5DF2\u63D0\u4EA4\u7684\u672C\u673A\u6587\u4EF6\uFF0C\u53EF\u5728 Git \u540C\u6B65\u8BBE\u7F6E\u4E2D\u68C0\u67E5\u5E76\u4FEE\u590D\u3002", cls: "zoey-sync-section-desc" });
       if (trackingChoice === "rebuild" && !this.plugin.settings.setupComplete) {
         new import_obsidian2.Setting(body).setName("\u786E\u8BA4\u91CD\u5EFA Git \u8FFD\u8E2A").setDesc("\u6211\u786E\u8BA4\u53D6\u6D88\u5168\u90E8\u8FFD\u8E2A\u5E76\u6309 .gitignore \u91CD\u5EFA\uFF1B\u672C\u673A\u6587\u4EF6\u4FDD\u7559\uFF0C\u88AB\u5FFD\u7565\u6587\u4EF6\u4F1A\u4ECE\u8FDC\u7AEF\u5F53\u524D\u7248\u672C\u79FB\u9664\u3002").addToggle((toggle) => toggle.setValue(this.setupRebuildConfirmed).onChange((value) => {
           this.setupRebuildConfirmed = value;
@@ -4349,6 +4451,20 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
     versionViewSetting.addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.showVersionViewSwitcher).onChange((value) => void this.plugin.setVersionViewSwitcher(value))
     );
+    advancedBody.createEl("h4", { text: "\u6587\u4EF6\u8FFD\u8E2A", cls: "zoey-sync-subsection-title" });
+    new import_obsidian2.Setting(advancedBody).setName("\u6309\u5FFD\u7565\u89C4\u5219\u4FEE\u590D\u8FFD\u8E2A").setDesc("\u5148\u68C0\u67E5 .gitignore \u548C\u5DF2\u8FFD\u8E2A\u6587\u4EF6\uFF0C\u518D\u53EA\u8BA9\u5E94\u5FFD\u7565\u7684\u6587\u4EF6\u9000\u51FA Git \u8DDF\u8E2A\u3002\u672C\u673A\u6587\u4EF6\u4FDD\u7559\uFF1B\u4E0D\u4F1A\u7ACB\u5373 Commit \u6216 Push\u3002\u82E5\u6709\u672A\u89E3\u51B3\u7684\u5408\u5E76\u51B2\u7A81\uFF0C\u8BF7\u5148\u5904\u7406\u3002").addButton((button) => button.setButtonText("\u68C0\u67E5\u5E76\u4FEE\u590D\u6587\u4EF6\u8FFD\u8E2A").setDisabled(preview).onClick(async () => {
+      button.setDisabled(true);
+      button.setButtonText("\u6B63\u5728\u68C0\u67E5\u2026");
+      try {
+        const result = await this.plugin.inspectFileTracking();
+        new FileTrackingModal(this.app, this.plugin, result).open();
+      } catch (error) {
+        new import_obsidian2.Notice(`Simple Link\uFF1A\u65E0\u6CD5\u68C0\u67E5\u6587\u4EF6\u8FFD\u8E2A\u3002${messageOf2(error)}`, 1e4);
+      } finally {
+        button.setDisabled(false);
+        button.setButtonText("\u68C0\u67E5\u5E76\u4FEE\u590D\u6587\u4EF6\u8FFD\u8E2A");
+      }
+    }));
     advancedBody.createEl("h4", { text: "\u540C\u6B65\u65F6\u95F4\u8BBE\u7F6E", cls: "zoey-sync-subsection-title" });
     new import_obsidian2.Setting(advancedBody).setName("\u7A7A\u95F2\u540E\u6C47\u603B\u53D8\u5316\u6587\u4EF6\u5217\u8868\uFF08\u79D2\uFF09").setDesc("\u6301\u7EED\u591A\u4E45\u6CA1\u6709\u6587\u4EF6\u53D8\u5316\u540E\u6C47\u603B\u6240\u6709\u53D8\u5316\u6587\u4EF6\uFF0C\u751F\u6210\u5F85 Commit\uFF0F\u4E0A\u4F20\u5217\u8868\u3002").addText((text) => {
       text.inputEl.type = "number";

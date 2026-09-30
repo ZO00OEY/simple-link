@@ -1915,6 +1915,77 @@
   color: var(--color-green);
 }
 
+.zoey-sync-setup-overview {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.zoey-sync-setup-overview__item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}
+
+.zoey-sync-setup-overview__item strong {
+  color: var(--text-normal);
+  font-size: var(--font-ui-large);
+  line-height: 1.2;
+}
+
+.zoey-sync-tracking-modal .zoey-sync-tracking-title {
+  margin: 0 0 16px;
+  color: var(--text-normal);
+  font-size: var(--font-ui-large);
+  font-weight: var(--font-semibold);
+  line-height: 1.3;
+}
+
+.zoey-sync-tracking-modal .zoey-sync-tracking-summary {
+  margin: 0 0 8px;
+  color: var(--text-normal);
+  font-size: var(--font-ui-medium);
+  line-height: 1.45;
+}
+
+.zoey-sync-tracking-modal .zoey-sync-tracking-description {
+  margin: 0 0 16px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+}
+
+.zoey-sync-tracking-modal .zoey-sync-tracking-details {
+  margin: 8px 0;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+}
+
+.zoey-sync-tracking-modal .zoey-sync-tracking-details summary {
+  cursor: pointer;
+  font-weight: var(--font-medium);
+}
+
+.zoey-sync-tracking-modal .zoey-sync-tracking-preview {
+  margin: 8px 0 12px 18px;
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-family: var(--font-monospace);
+  font-size: var(--font-ui-smaller);
+  line-height: 1.5;
+}
+
 .zoey-sync-setup-files {
   margin: 10px 0;
   padding: 10px 12px;
