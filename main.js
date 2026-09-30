@@ -3543,7 +3543,6 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
     this.desktopPage = "root";
-    this.setupPanel = "guide";
     this.setupViewStep = 1;
     this.setupRepoInput = "";
     this.setupRepoNameInput = "";
@@ -3564,7 +3563,20 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.addClass("zoey-sync-settings");
-    containerEl.toggleClass("zoey-sync-setup-page", this.desktopPage === "setup" && !import_obsidian2.Platform.isMobile);
+    containerEl.toggleClass("zoey-sync-setup-page", ["setup", "desktop-settings"].includes(this.desktopPage) && !import_obsidian2.Platform.isMobile);
+    containerEl.toggleClass("zoey-sync-mobile-guide-page", this.desktopPage === "beginner-mobile");
+    if (this.desktopPage === "beginner-mobile") {
+      this.displayBeginnerMobile(containerEl);
+      return;
+    }
+    if (this.desktopPage === "beginner-desktop") {
+      this.displayDevicePreview(containerEl, "从创建仓库开始：电脑端同步", "请在电脑端打开此引导，完成 GitHub 授权、仓库接入与两端检查。");
+      return;
+    }
+    if (this.desktopPage === "beginner-server") {
+      this.displayDevicePreview(containerEl, "从零开始的服务器端同步指南", "服务器端接入引导将在这里补充。");
+      return;
+    }
     if (this.desktopPage === "mobile") {
       this.displayMobilePreview(containerEl);
       return;
@@ -3573,20 +3585,17 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
       this.displayServerPreview(containerEl);
       return;
     }
-    if (this.desktopPage === "android-guide") {
-      this.displayDevicePreview(containerEl, "\u4ECE\u96F6\u5F00\u59CB\u7684 Git \u540C\u6B65\u4F7F\u7528\u6307\u5357\uFF08Android\uFF09", "Android \u7AEF\u7684\u63A5\u5165\u6B65\u9AA4\u5C06\u5728\u8F7B\u91CF\u7248 Git \u540C\u6B65\u529F\u80FD\u5B8C\u6210\u540E\u8865\u5145\u3002", "mobile");
-      return;
-    }
-    if (this.desktopPage === "ios-guide") {
-      this.displayDevicePreview(containerEl, "\u4ECE\u96F6\u5F00\u59CB\u7684 Git \u540C\u6B65\u4F7F\u7528\u6307\u5357\uFF08iOS\uFF09", "iOS \u7AEF\u7684\u63A5\u5165\u6B65\u9AA4\u5C06\u5728\u8F7B\u91CF\u7248 Git \u540C\u6B65\u529F\u80FD\u5B8C\u6210\u540E\u8865\u5145\u3002", "mobile");
-      return;
-    }
     if (!import_obsidian2.Platform.isMobile && this.desktopPage === "setup") {
       this.displaySetup(containerEl);
       return;
     }
+    if (!import_obsidian2.Platform.isMobile && this.desktopPage === "desktop-settings") {
+      this.displayDesktopSettings(containerEl);
+      return;
+    }
     containerEl.createEl("h2", { text: "Simple Link" });
     this.addEnableSetting(containerEl);
+    this.displayBeginner(containerEl);
     this.displayDesktop(containerEl);
   }
   addEnableSetting(parent) {
@@ -3642,14 +3651,150 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
   addCurrentDeviceBadge(button) {
     button.createSpan({ text: "\u7CFB\u7EDF\u8BC6\u522B \xB7 \u5F53\u524D\u8BBE\u5907", cls: "zoey-sync-device-badge" });
   }
+  addBeginnerLink(parent, title, icon, page) {
+    const button = parent.createEl("button", {
+      cls: "zoey-sync-page-link zoey-sync-beginner-link",
+      attr: { type: "button" }
+    });
+    (0, import_obsidian2.setIcon)(button.createSpan({ cls: "zoey-sync-page-link__icon" }), icon);
+    button.createSpan({ text: title, cls: "zoey-sync-page-link__title" });
+    button.addEventListener("click", () => {
+      if (page === "setup") this.prepareSetupGuide();
+      this.desktopPage = page;
+      this.display();
+    });
+  }
+  prepareSetupGuide() {
+    this.stopSetupBrowserAuthorization();
+    this.setupAuthMode = null;
+    this.setupAuthVerified = false;
+    this.setupFailure = false;
+    this.setupViewStep = !this.plugin.settings.setupComplete && this.plugin.settings.setupStep === 4 && !this.plugin.getSetupPreview() ? 3 : this.plugin.settings.setupStep;
+    this.setupRepoInput = this.plugin.settings.setupRepoUrl || this.plugin.settings.gitRemoteUrl;
+    this.setupRepoMode = "existing";
+  }
+  displayBeginner(containerEl) {
+    containerEl.createEl("h3", { text: "入门小助手", cls: "zoey-sync-section-title" });
+    containerEl.createEl("p", { text: "从创建仓库开始，按设备查看接入步骤。", cls: "zoey-sync-section-desc" });
+    const links = containerEl.createDiv({ cls: "zoey-sync-beginner-links" });
+    this.addBeginnerLink(links, "电脑端同步引导", "monitor", import_obsidian2.Platform.isMobile ? "beginner-desktop" : "setup");
+    this.addBeginnerLink(links, "手机端同步引导", "smartphone", "beginner-mobile");
+    this.addBeginnerLink(links, "服务器端同步引导", "server", "beginner-server");
+  }
+  displayBeginnerMobile(containerEl) {
+    this.displayDevicePreview(containerEl, "手机端同步引导", "先在电脑上取得 GitHub Token，再到手机端完成接入。");
+    const columns = containerEl.createDiv({ cls: "zoey-sync-mobile-guide" });
+    const beforeToken = columns.createDiv({ cls: "zoey-sync-mobile-guide__card" });
+    beforeToken.createEl("h3", { text: "我尚未获取 Token", cls: "zoey-sync-mobile-guide__title" });
+    beforeToken.createEl("p", { text: "需在已接入仓库的电脑端操作。" });
+    if (this.plugin.settings.setupComplete) {
+      beforeToken.createEl("p", { text: "✓ 电脑端首次接入已完成，可以继续检查登录并获取 Token。", cls: "zoey-sync-mobile-guide__ready" });
+    } else {
+      const setupHint = beforeToken.createDiv({ cls: "zoey-sync-mobile-guide__setup-hint" });
+      setupHint.createSpan({ text: "请先完成电脑端首次接入。" });
+      if (!import_obsidian2.Platform.isMobile) {
+        const setupLink = setupHint.createEl("button", { text: "打开电脑端引导", attr: { type: "button" } });
+        setupLink.addEventListener("click", () => {
+          this.prepareSetupGuide();
+          this.desktopPage = "setup";
+          this.display();
+        });
+      }
+    }
+    const loginStep = beforeToken.createDiv({ cls: "zoey-sync-mobile-guide__step" });
+    loginStep.createEl("h4", { text: "第一步：确认登录状态" });
+    loginStep.createEl("p", { text: "检查 GitHub CLI 当前账号是否仍可登录。" });
+    const checkButton = loginStep.createEl("button", { text: "检查登录状态", attr: { type: "button" } });
+    const tokenStep = beforeToken.createDiv({ cls: "zoey-sync-mobile-guide__step" });
+    tokenStep.createEl("h4", { text: "第二步：获取 Token" });
+    tokenStep.createEl("p", { text: "检查当前账号对已接入仓库的写入权限，再复制电脑端 GitHub CLI 使用的 Token。它可能同时拥有其他仓库权限，请妥善保存，勿发给他人。" });
+    const tokenButton = tokenStep.createEl("button", { text: "检查权限、生成并复制 Token", attr: { type: "button" } });
+    const result = beforeToken.createEl("p", { cls: "zoey-sync-mobile-guide__result", attr: { role: "status", "aria-live": "polite" } });
+    const tokenDisplay = beforeToken.createDiv({ cls: "zoey-sync-mobile-guide__token" });
+    tokenDisplay.hidden = true;
+    tokenDisplay.createEl("div", { text: "GitHub Token（明文）", cls: "zoey-sync-mobile-guide__token-label" });
+    const tokenRow = tokenDisplay.createDiv({ cls: "zoey-sync-mobile-guide__token-row" });
+    const tokenText = tokenRow.createEl("code", { cls: "zoey-sync-mobile-guide__token-text" });
+    const copyToken = tokenRow.createEl("button", { cls: "clickable-icon zoey-sync-mobile-guide__copy", attr: { type: "button", title: "复制 Token", "aria-label": "复制 Token" } });
+    (0, import_obsidian2.setIcon)(copyToken, "copy");
+    tokenDisplay.createEl("p", { text: "本插件不会保存 Token。关闭此页面后，明文会消失；需要时请重新检查权限并获取 Token。", cls: "zoey-sync-mobile-guide__token-note" });
+    let tokenOnPage = "";
+    copyToken.addEventListener("click", () => void (async () => {
+      try {
+        await navigator.clipboard.writeText(tokenOnPage);
+        result.setText("Token 已再次复制到剪贴板。");
+      } catch {
+        result.setText("复制失败，请从下方明文手动复制 Token。");
+      }
+    })());
+    const desktop = !import_obsidian2.Platform.isMobile;
+    checkButton.disabled = !desktop;
+    tokenButton.disabled = !desktop;
+    if (!desktop) result.setText("请在电脑端打开本页完成前两步。");
+    const run = async (action) => {
+      checkButton.disabled = true;
+      tokenButton.disabled = true;
+      result.setText("正在检查…");
+      try {
+        await action();
+      } catch (error) {
+        result.setText(`操作失败：${messageOf(error)}`);
+      } finally {
+        checkButton.disabled = false;
+        tokenButton.disabled = false;
+      }
+    };
+    checkButton.addEventListener("click", () => void run(async () => {
+      await this.plugin.exec("gh", ["auth", "status", "--active", "--hostname", "github.com"]);
+      result.setText("GitHub 登录状态正常。可继续获取 Token。");
+    }));
+    tokenButton.addEventListener("click", () => void run(async () => {
+      tokenOnPage = "";
+      tokenText.setText("");
+      tokenDisplay.hidden = true;
+      await this.plugin.exec("gh", ["auth", "status", "--active", "--hostname", "github.com"]);
+      const remote = this.plugin.settings.setupRepoUrl || this.plugin.settings.gitRemoteUrl;
+      if (!remote) throw new Error("请先完成电脑端 GitHub 仓库接入。");
+      const { owner, name } = parseGithubRepoUrl(remote);
+      const canPush = await this.plugin.exec("gh", ["api", `repos/${owner}/${name}`, "--jq", ".permissions.push"]);
+      if (canPush.trim() !== "true") throw new Error("当前 GitHub 账号没有该仓库的写入权限。");
+      const token = (await this.plugin.exec("gh", ["auth", "token", "--hostname", "github.com"])).trim();
+      if (!token) throw new Error("GitHub CLI 未返回 Token。");
+      tokenOnPage = token;
+      tokenText.setText(token);
+      tokenDisplay.hidden = false;
+      try {
+        await navigator.clipboard.writeText(token);
+        result.setText("已确认仓库写入权限，Token 已复制到剪贴板，并在下方显示。");
+      } catch {
+        result.setText("已确认仓库写入权限，Token 已在下方显示；自动复制失败，请手动复制。");
+      }
+    }));
+    const hasToken = columns.createDiv({ cls: "zoey-sync-mobile-guide__card" });
+    hasToken.createEl("h3", { text: "我已获取 Token", cls: "zoey-sync-mobile-guide__title" });
+    hasToken.createEl("p", { text: "在手机端操作。" });
+    hasToken.createEl("p", { text: "手机端 Token 填写与同步配置将在轻量版 Git 功能完成后提供。", cls: "zoey-sync-mobile-guide__placeholder" });
+  }
+  displayDesktopSettings(containerEl) {
+    const page = containerEl.createDiv({ cls: "zoey-sync-setup-layout" });
+    const header = page.createDiv({ cls: "zoey-sync-page-header zoey-sync-setup-header" });
+    const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", title: "返回", "aria-label": "返回设备同步" } });
+    (0, import_obsidian2.setIcon)(back, "arrow-left");
+    back.addEventListener("click", () => {
+      this.desktopPage = "root";
+      this.display();
+    });
+    header.createEl("h2", { text: "电脑端 Git 同步", cls: "zoey-sync-page-title" });
+    this.displayDesktopAdvanced(page);
+  }
   displayDesktop(containerEl) {
     const currentDevice = this.currentDevice();
-    containerEl.createEl("h3", { text: "\u8BBE\u5907\u540C\u6B65", cls: "zoey-sync-section-title" });
+    containerEl.createEl("h3", { text: "设不同设备同步设置", cls: "zoey-sync-section-title" });
     containerEl.createEl("p", { text: "\u5DF2\u81EA\u52A8\u8BC6\u522B\u5F53\u524D\u8BBE\u5907\uFF0C\u5E76\u505C\u7528\u5176\u4ED6\u5E73\u53F0\u7684\u540C\u6B65\u8BBE\u7F6E\u3002", cls: "zoey-sync-section-desc" });
     this.addSetupEntry(containerEl, currentDevice === "git");
     const entries = [
-      { page: "mobile", title: "\u624B\u673A\u7AEF\u540C\u6B65", desc: "Android / iOS \xB7 \u8F7B\u91CF\u7248 Git \u540C\u6B65", icon: "smartphone" },
-      { page: "server", title: "\u670D\u52A1\u5668\u7AEF\u540C\u6B65", desc: "Linux \xB7 \u670D\u52A1\u5668\u540C\u6B65\u8BBE\u7F6E", icon: "server" }
+      { page: "mobile", title: "手机端 轻量 Git 同步设置", desc: "Android / iOS · 轻量版 Git 同步", icon: "smartphone" },
+      { page: "server", title: "服务器端 脚本 Git 同步设置", desc: "Linux · 服务器同步设置", icon: "server" }
     ];
     for (const entry of entries) {
       const isCurrent = currentDevice === entry.page;
@@ -3674,7 +3819,7 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
   }
   displayDevicePreview(containerEl, title, description, backPage = "root") {
     const header = containerEl.createDiv({ cls: "zoey-sync-page-header" });
-    const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", "aria-label": "\u8FD4\u56DE\u8BBE\u5907\u540C\u6B65" } });
+    const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", "aria-label": "返回" } });
     (0, import_obsidian2.setIcon)(back, "arrow-left");
     back.addEventListener("click", () => {
       this.desktopPage = backPage;
@@ -3700,51 +3845,21 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
     } else {
       this.displayDevicePreview(containerEl, "\u624B\u673A\u7AEF\u540C\u6B65", "Android / iOS \u8F7B\u91CF\u7248 Git \u540C\u6B65\u8BBE\u7F6E\u5C06\u5728\u8FD9\u91CC\u8865\u5145\u3002");
     }
-    for (const guide of [
-      { page: "android-guide", title: "\u4ECE\u96F6\u5F00\u59CB\u7684 Git \u540C\u6B65\u4F7F\u7528\u6307\u5357\uFF08Android\uFF09" },
-      { page: "ios-guide", title: "\u4ECE\u96F6\u5F00\u59CB\u7684 Git \u540C\u6B65\u4F7F\u7528\u6307\u5357\uFF08iOS\uFF09" }
-    ]) {
-      const button = containerEl.createEl("button", { cls: "zoey-sync-page-link zoey-sync-device-link is-preview", attr: { type: "button" } });
-      (0, import_obsidian2.setIcon)(button.createSpan({ cls: "zoey-sync-page-link__icon" }), "book-open");
-      const copy = button.createSpan({ cls: "zoey-sync-page-link__copy" });
-      copy.createSpan({ text: guide.title, cls: "zoey-sync-page-link__title" });
-      copy.createSpan({ text: "\u5F85\u8865\u5145", cls: "zoey-sync-page-link__desc" });
-      (0, import_obsidian2.setIcon)(button.createSpan({ cls: "zoey-sync-page-link__chevron" }), "chevron-right");
-      button.addEventListener("click", () => {
-        this.desktopPage = guide.page;
-        this.display();
-      });
-    }
   }
   addSetupEntry(parent, isCurrent) {
     const button = parent.createEl("button", { cls: `zoey-sync-page-link zoey-sync-device-link zoey-sync-device-link--desktop${isCurrent ? "" : " is-disabled"}`, attr: { type: "button" } });
     button.disabled = !isCurrent;
     (0, import_obsidian2.setIcon)(button.createSpan({ cls: "zoey-sync-page-link__icon" }), "monitor");
     const copy = button.createSpan({ cls: "zoey-sync-page-link__copy" });
-    copy.createSpan({ text: "\u7535\u8111\u7AEF Git \u540C\u6B65", cls: "zoey-sync-page-link__title" });
-    copy.createSpan({ text: this.desktopSetupStatusText(), cls: "zoey-sync-page-link__desc" });
+    copy.createSpan({ text: "电脑端 Git 同步设置", cls: "zoey-sync-page-link__title" });
+    copy.createSpan({ text: "界面、自动同步时间与 Git 设置", cls: "zoey-sync-page-link__desc" });
     if (!isCurrent) return;
     this.addCurrentDeviceBadge(button);
     (0, import_obsidian2.setIcon)(button.createSpan({ cls: "zoey-sync-page-link__chevron" }), "chevron-right");
     button.addEventListener("click", () => {
-      this.desktopPage = "setup";
-      this.setupPanel = "guide";
-      this.stopSetupBrowserAuthorization();
-      this.setupAuthMode = null;
-      this.setupAuthVerified = false;
-      this.setupFailure = false;
-      this.setupViewStep = !this.plugin.settings.setupComplete && this.plugin.settings.setupStep === 4 && !this.plugin.getSetupPreview() ? 3 : this.plugin.settings.setupStep;
-      this.setupRepoInput = this.plugin.settings.setupRepoUrl || this.plugin.settings.gitRemoteUrl;
-      this.setupRepoMode = "existing";
+      this.desktopPage = "desktop-settings";
       this.display();
     });
-  }
-  desktopSetupStatusText() {
-    const { setupComplete, setupVerified, setupMutationStarted, setupStep, setupBackup } = this.plugin.settings;
-    if (setupMutationStarted) return "\u63A5\u5165\u672A\u5B8C\u6210\uFF0C\u8BF7\u7EE7\u7EED\u5F15\u5BFC";
-    if (setupComplete) return setupVerified ? "\u5DF2\u5B8C\u6210\u63A5\u5165" : "\u5DF2\u6709\u8FDE\u63A5\uFF0C\u5F85\u6838\u9A8C";
-    if (setupStep > 1 || setupBackup) return "\u63A5\u5165\u8FDB\u884C\u4E2D\uFF0C\u8BF7\u7EE7\u7EED\u5F15\u5BFC";
-    return "\u5F53\u524D\u672A\u63A5\u5165\uFF0C\u53EF\u901A\u8FC7\u5F15\u5BFC\u4ECE0\u5F00\u59CB\u5C1D\u8BD5Git\u540C\u6B65";
   }
   setupLink(parent, label, href) {
     parent.createEl("a", { text: label, href, attr: { target: "_blank", rel: "noopener noreferrer" } });
@@ -3823,10 +3938,8 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
       this.desktopPage = "root";
       this.display();
     });
-    header.createEl("h2", { text: "\u7535\u8111\u7AEF Git \u540C\u6B65", cls: "zoey-sync-page-title" });
-    if (this.setupPanel === "guide") {
-      page.createEl("p", { text: "\u6309\u987A\u5E8F\u5B8C\u6210\u56DB\u6B65\u3002\u5DF2\u6838\u9A8C\u7684\u6B65\u9AA4\u53EF\u4EE5\u968F\u65F6\u8FD4\u56DE\u67E5\u770B\u3002", cls: "zoey-sync-section-desc" });
-    }
+    header.createEl("h2", { text: "从创建仓库开始：电脑端同步", cls: "zoey-sync-page-title" });
+    page.createEl("p", { text: "按顺序完成四步。已核验的步骤可以随时返回查看。", cls: "zoey-sync-section-desc" });
     const guidedDone = this.plugin.settings.setupComplete && !!this.plugin.settings.setupVerified;
     const latestConnectionLog = this.plugin.getRecentErrorLogs().find((entry) => /测试连接|Fetch|Pull|Push|同步/.test(entry.context));
     const loggedFailure = guidedDone && latestConnectionLog?.status === "error" ? latestConnectionLog : void 0;
@@ -3862,45 +3975,16 @@ var ZoeySyncSettingTab = class extends import_obsidian2.PluginSettingTab {
     if (guidedDone && this.plugin.settings.enabled) {
       const restart = status.createEl("button", { text: "\u91CD\u65B0\u68C0\u67E5\u6216\u4FEE\u590D\u63A5\u5165", attr: { type: "button" } });
       restart.addEventListener("click", () => {
-        this.setupPanel = "guide";
         void this.runSetup(() => this.plugin.beginSetup(), "\u5DF2\u6682\u505C\u81EA\u52A8 Git \u64CD\u4F5C\uFF0C\u8BF7\u4ECE\u7B2C 1 \u6B65\u5F00\u59CB\u3002");
       });
     } else if (this.plugin.settings.setupComplete && !guidedDone) {
       const restart = status.createEl("button", { text: "\u4ECE\u7B2C\u4E00\u6B65\u91CD\u65B0\u68C0\u67E5\u63A5\u5165", attr: { type: "button" } });
       restart.addEventListener("click", () => {
-        this.setupPanel = "guide";
         void this.runSetup(() => this.plugin.beginSetup(), "\u5DF2\u6682\u505C\u81EA\u52A8 Git \u64CD\u4F5C\uFF0C\u8BF7\u4ECE\u7B2C 1 \u6B65\u5F00\u59CB\u3002");
       });
     }
-    const tabList = page.createDiv({ cls: "zoey-sync-setup-tabs", attr: { role: "tablist", "aria-label": "\u7535\u8111\u7AEF Git \u540C\u6B65\u8BBE\u7F6E" } });
-    for (const panel2 of ["guide", "advanced"]) {
-      const selected = this.setupPanel === panel2;
-      const tab = tabList.createEl("button", {
-        text: panel2 === "guide" ? "\u63A5\u5165\u5F15\u5BFC" : "\u9AD8\u7EA7\u8BBE\u7F6E",
-        cls: `zoey-sync-setup-tab${selected ? " is-active" : ""}`,
-        attr: {
-          type: "button",
-          id: `zoey-sync-setup-tab-${panel2}`,
-          role: "tab",
-          "aria-selected": String(selected),
-          "aria-controls": "zoey-sync-setup-tab-panel"
-        }
-      });
-      tab.addEventListener("click", () => {
-        if (this.setupPanel === panel2) return;
-        if (panel2 === "advanced") this.stopSetupBrowserAuthorization();
-        this.setupPanel = panel2;
-        this.display();
-      });
-    }
-    const panel = page.createDiv({
-      cls: "zoey-sync-setup-tab-panel",
-      attr: { id: "zoey-sync-setup-tab-panel", role: "tabpanel", "aria-labelledby": `zoey-sync-setup-tab-${this.setupPanel}` }
-    });
-    if (this.setupPanel === "advanced") {
-      this.displayDesktopAdvanced(panel);
-      return;
-    }
+    page.createEl("h3", { text: "接入引导", cls: "zoey-sync-section-title zoey-sync-setup-guide-title" });
+    const panel = page.createDiv({ cls: "zoey-sync-setup-tab-panel" });
     if (!this.plugin.settings.setupComplete && this.plugin.settings.setupBackup && !this.plugin.settings.setupMutationStarted) {
       new import_obsidian2.Setting(panel).setDesc("\u9000\u51FA\u5411\u5BFC\u5E76\u6062\u590D\u4E4B\u524D\u5DF2\u914D\u7F6E\u7684\u81EA\u52A8\u540C\u6B65\u3002").addButton((button) => button.setButtonText("\u53D6\u6D88\u5411\u5BFC\uFF0C\u6062\u590D\u65E7\u540C\u6B65").onClick(() => void this.runSetup(() => this.plugin.cancelSetup(), "\u5DF2\u6062\u590D\u4E4B\u524D\u7684\u540C\u6B65\u914D\u7F6E\u3002")));
     }

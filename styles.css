@@ -26,6 +26,12 @@
   font-size: var(--font-ui-small);
 }
 
+.zoey-sync-beginner-links {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .zoey-sync-settings button.zoey-sync-page-link {
   display: grid;
   width: 100%;
@@ -49,6 +55,168 @@
   transition:
     border-color 120ms ease,
     background-color 120ms ease;
+}
+
+.zoey-sync-settings button.zoey-sync-beginner-link {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  min-height: 106px;
+  padding: 14px 8px;
+  text-align: center;
+}
+
+.zoey-sync-mobile-guide {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.zoey-sync-mobile-guide__card {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-secondary);
+}
+
+.zoey-sync-mobile-guide__title {
+  margin: 0 0 8px;
+  font-size: var(--font-ui-medium);
+}
+
+.zoey-sync-mobile-guide__card p {
+  margin: 0 0 14px;
+  color: var(--text-muted);
+}
+
+.zoey-sync-mobile-guide__step {
+  margin-top: 20px;
+}
+
+.zoey-sync-mobile-guide__step h4 {
+  margin: 0 0 6px;
+  font-size: var(--font-ui-medium);
+}
+
+.zoey-sync-mobile-guide__card .zoey-sync-mobile-guide__result {
+  margin: 16px 0 0;
+  color: var(--text-normal);
+}
+
+.zoey-sync-mobile-guide__result:empty {
+  display: none;
+}
+
+.zoey-sync-mobile-guide__card .zoey-sync-mobile-guide__placeholder {
+  margin-top: 20px;
+  padding: 16px;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 8px;
+}
+
+.zoey-sync-mobile-guide__token {
+  margin-top: 16px;
+}
+
+.zoey-sync-mobile-guide__token[hidden] {
+  display: none;
+}
+
+.zoey-sync-mobile-guide__token-label {
+  margin-bottom: 6px;
+  font-weight: var(--font-semibold);
+}
+
+.zoey-sync-mobile-guide__token-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  background: var(--background-primary);
+}
+
+.zoey-sync-mobile-guide__token-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.zoey-sync-settings button.zoey-sync-mobile-guide__copy {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+}
+
+.zoey-sync-mobile-guide__copy svg {
+  width: 16px;
+  height: 16px;
+}
+
+.zoey-sync-mobile-guide__ready,
+.zoey-sync-mobile-guide__setup-hint {
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--background-primary);
+}
+
+.zoey-sync-mobile-guide__ready {
+  color: var(--text-success) !important;
+}
+
+.zoey-sync-mobile-guide__setup-hint button {
+  margin: 8px 0 0;
+}
+
+.modal.mod-settings .vertical-tab-content.zoey-sync-mobile-guide-page {
+  font-family: var(--font-interface);
+  font-size: 12px;
+}
+
+.modal.mod-settings .vertical-tab-content.zoey-sync-mobile-guide-page .zoey-sync-page-title,
+.zoey-sync-setup-page .zoey-sync-setup-layout > .zoey-sync-setup-guide-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: var(--font-semibold);
+  line-height: 1.4;
+}
+
+.modal.mod-settings .vertical-tab-content.zoey-sync-mobile-guide-page .zoey-sync-section-desc {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.modal.mod-settings .vertical-tab-content.zoey-sync-mobile-guide-page .zoey-sync-mobile-guide__title,
+.modal.mod-settings .vertical-tab-content.zoey-sync-mobile-guide-page .zoey-sync-mobile-guide__step h4 {
+  font-size: 13px;
+  font-weight: var(--font-semibold);
+  line-height: 1.4;
+}
+
+.modal.mod-settings .vertical-tab-content.zoey-sync-mobile-guide-page .zoey-sync-mobile-guide__card p,
+.modal.mod-settings .vertical-tab-content.zoey-sync-mobile-guide-page .zoey-sync-mobile-guide__card button,
+.modal.mod-settings .vertical-tab-content.zoey-sync-mobile-guide-page .zoey-sync-mobile-guide__token-label,
+.modal.mod-settings .vertical-tab-content.zoey-sync-mobile-guide-page .zoey-sync-mobile-guide__token-text {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.modal.mod-settings .vertical-tab-content.zoey-sync-mobile-guide-page .zoey-sync-mobile-guide__card .zoey-sync-mobile-guide__result {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .zoey-sync-mobile-guide {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .zoey-sync-settings button.zoey-sync-page-link:hover {
