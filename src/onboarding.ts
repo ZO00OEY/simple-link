@@ -2,7 +2,8 @@ import { DEFAULT_SYNC_IGNORE_PATTERNS, shouldIgnore } from "./dirty";
 import { parseGitStatus } from "./gitStatus";
 import { findNestedRepos, nestedGitIgnoreRules, nestedRepoFiles, rebuildNestedRepoTracking, seedNestedRepoFiles, NestedRepo } from "./nestedRepos";
 
-const nodeRequire = (globalThis as unknown as { require?: (name: string) => unknown }).require;
+const nodeRequire = typeof process !== "undefined" && process.versions?.node
+  ? (globalThis as unknown as { require?: (name: string) => unknown }).require : undefined;
 const nodeFs = nodeRequire ? (nodeRequire("fs") as typeof import("fs")).promises : null;
 const nodeFsStream = nodeRequire ? nodeRequire("fs") as typeof import("fs") : null;
 const nodePath = nodeRequire ? nodeRequire("path") as typeof import("path") : null;
@@ -31,6 +32,11 @@ export interface SetupPreview {
   nestedRepos: NestedRepo[];
   trackedExcludedLocal: string[];
   trackedExcludedRemote: string[];
+  localIgnore: string;
+  remoteIgnore: string;
+  trackedLocalFiles: string[];
+  additionalIgnoredLocal: string[];
+  optimizedIgnore: string;
 }
 
 export interface SetupOverlapContent {
@@ -49,38 +55,88 @@ export interface VerifiedRepo {
 
 export type RunCommand = (program: string, args: string[], timeoutMs?: number, onOutput?: (chunk: string) => void, stdinText?: string, signal?: AbortSignal) => Promise<string>;
 
+function gitTransferProgress(label: string, report?: (message: string) => void): (chunk: string) => void {
+  return chunk => {
+    const matches = [...chunk.matchAll(/(Receiving objects|Resolving deltas|Counting objects|Compressing objects|Writing objects):\s*(\d+)%/g)];
+    const latest = matches[matches.length - 1];
+    if (!latest) return;
+    const phase = latest[1] === "Receiving objects" ? "接收对象" : latest[1] === "Resolving deltas" ? "解析差异" : latest[1] === "Counting objects" ? "统计对象" : latest[1] === "Writing objects" ? "发送对象" : "压缩对象";
+    report?.(`${label}：${phase} ${latest[2]}%…`);
+  };
+}
+
 export const SETUP_GITIGNORE = [
-  "# Obsidian local state",
+  "# Git 元数据",
+  ".git/",
+  "# Obsidian 工作区、回收站与缓存",
   ".obsidian/cache/",
   ".obsidian/workspace.json",
   ".obsidian/workspace-mobile.json",
   ".obsidian/workspaces/",
   ".obsidian/trash/",
   ".trash/",
-  "# Local credentials and agent output",
+  "# 插件生成的本机状态与日志（同步设置保留）",
   ".obsidian/plugins/zoey-sync-test/data.json",
   ".obsidian/plugins/simple-one-sync/data.json",
   ".obsidian/plugins/obsidian-git/data.json",
   ".obsidian/plugins/recent-files-obsidian/data.json",
   ".obsidian/plugins/simple-link/data.json",
+  ".obsidian/plugins/simple-link/link-state.json",
+  ".obsidian/plugins/simple-link/link-state.json.recovery",
+  ".obsidian/plugins/simple-link/mobile-ignore.json",
+  "# AI 工具的本机临时产物与会话",
   ".codex/output/",
   ".codex/AGENTS.md",
   ".claudian/sessions/",
   ".smart-env/",
+  "# Obsidian Git 临时冲突清单",
   "conflict-files-obsidian-git.md",
-  "# OS and temporary files",
+  "# 系统文件",
   ".DS_Store",
   "Thumbs.db",
   "desktop.ini",
+  "# 备份与临时文件",
   "*.tmp",
   "*.bak",
+  "# 本机依赖",
   "node_modules/"
 ];
+
+/** Presentation only: keep the original pattern order in the executable plan. */
+export function setupIgnoreRuleGroups(preview: SetupPreview): { title: string; rules: string[] }[] {
+  const groups = [{ title: "Git 元数据（保留内嵌仓库自身历史）", rules: [".git/", ...nestedGitIgnoreRules(preview.nestedRepos)] }];
+  for (const line of SETUP_GITIGNORE) {
+    if (line === "# Git 元数据" || line === ".git/") continue;
+    if (line.startsWith("# ")) groups.push({ title: line.slice(2), rules: [] });
+    else groups[groups.length - 1].rules.push(line);
+  }
+  return groups;
+}
 
 export function missingSetupIgnoreRules(existing: string): string[] {
   const patterns = new Set(existing.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#")));
   return SETUP_GITIGNORE.filter((line) => !line.startsWith("#") &&
     !patterns.has(line) && !(line.endsWith("/") && patterns.has(line.slice(0, -1))));
+}
+
+export function applySetupIgnoreBase(preview: SetupPreview, choice: OverlapChoice): void {
+  const base = choice === "remote" ? preview.remoteIgnore : preview.localIgnore;
+  const lines = base.split(/\r?\n/);
+  const missing = [...missingSetupIgnoreRules(base), ...nestedGitIgnoreRules(preview.nestedRepos)
+    .filter((rule) => !lines.includes(rule))];
+  const eol = base.includes("\r\n") ? "\r\n" : "\n";
+  preview.missingIgnoreRules = missing;
+  preview.optimizedIgnore = missing.length
+    ? `${base}${base && !base.endsWith("\n") ? eol : ""}${eol}# Simple Link recommended local exclusions${eol}${missing.join(eol)}${eol}`
+    : base;
+  const patterns = preview.optimizedIgnore.split(/\r?\n/);
+  preview.trackedExcludedLocal = [...new Set([...preview.additionalIgnoredLocal,
+    ...preview.trackedLocalFiles.filter((name) => shouldIgnore(name, patterns) || shouldIgnore(name, SETUP_GITIGNORE))])].sort();
+  preview.trackedExcludedRemote = preview.remoteFiles.filter((name) => shouldIgnore(name, patterns) || shouldIgnore(name, SETUP_GITIGNORE));
+}
+
+export function setupIgnoreDiffers(preview: SetupPreview): boolean {
+  return preview.localIgnore.replace(/\r\n/g, "\n").trim() !== preview.remoteIgnore.replace(/\r\n/g, "\n").trim();
 }
 
 export function parseGithubRepoUrl(input: string): { url: string; owner: string; name: string } {
@@ -246,7 +302,8 @@ export class GitSetup {
     return found.sort();
   }
 
-  async preview(repo: VerifiedRepo): Promise<SetupPreview> {
+  async preview(repo: VerifiedRepo, onProgress?: (message: string) => void): Promise<SetupPreview> {
+    onProgress?.("1 · 检查本地仓库、分支与未完成的 Git 操作…");
     const localRoot = await this.localRoot();
     if (localRoot && (await nodeFs!.realpath(localRoot)).toLowerCase() !== (await nodeFs!.realpath(this.vaultPath)).toLowerCase()) {
       throw new Error(`当前 Vault 位于另一个 Git 仓库内部：${localRoot}。请先独立设置 Vault 仓库。`);
@@ -269,6 +326,7 @@ export class GitSetup {
         throw new Error("现有 origin 指向其他仓库或包含凭据。向导不会覆盖它。");
       }
     }
+    onProgress?.("2 · 扫描本地文件与内嵌仓库…");
     const nestedRepos = await findNestedRepos(this.vaultPath);
     const nestedUserData = new Set((await nestedRepoFiles(this.vaultPath, nestedRepos, (args) => this.run("git", args)))
       .filter((name) => nestedRepos.some((repo) => name === `${repo.directory}/data.json`)));
@@ -281,6 +339,9 @@ export class GitSetup {
       : [];
     const localSignatures: Record<string, string> = {};
     const localGitBlobs: Record<string, string> = {};
+    let hashed = 0;
+    let lastProgress = Date.now();
+    onProgress?.(`3 · 计算本地文件哈希：0 / ${localFiles.length}…`);
     for (const file of localFiles) {
       const stat = await nodeFs!.stat(nodePath!.join(this.vaultPath, file));
       const hash = nodeCrypto!.createHash("sha256");
@@ -291,7 +352,13 @@ export class GitSetup {
       }
       localSignatures[file] = `${stat.size}:${hash.digest("hex")}`;
       localGitBlobs[file] = gitHash.digest("hex");
+      hashed++;
+      if (hashed === localFiles.length || Date.now() - lastProgress >= 250) {
+        onProgress?.(`3 · 计算本地文件哈希：${hashed} / ${localFiles.length}…`);
+        lastProgress = Date.now();
+      }
     }
+    onProgress?.("4 · 检查本地与云端的提交历史…");
     let alreadyLinked = false;
     let relatedHistory = false;
     if (localRoot && repo.remoteSha) {
@@ -302,9 +369,11 @@ export class GitSetup {
         try { await this.run("git", ["cat-file", "-e", `${repo.remoteSha}^{commit}`]); }
         catch {
           // Download commit objects only; leave refs, index, and working files untouched.
-          await this.run("git", ["fetch", "--no-tags", "--no-write-fetch-head", repo.url, repo.branch]);
+          onProgress?.("4 · Fetch：获取云端提交记录…");
+          await this.run("git", ["fetch", "--progress", "--no-tags", "--no-write-fetch-head", repo.url, repo.branch], undefined, gitTransferProgress("4 · Fetch", onProgress));
           await this.run("git", ["cat-file", "-e", `${repo.remoteSha}^{commit}`]);
         }
+        onProgress?.("4 · Merge-base：检查两端共同历史与合并关系…");
         try { await this.run("git", ["merge-base", "HEAD", repo.remoteSha]); relatedHistory = true; }
         catch { /* independently created repositories */ }
         if (relatedHistory) {
@@ -328,6 +397,7 @@ export class GitSetup {
     }
     let remoteFiles: string[] = [];
     const remoteBlobs: Record<string, { sha: string; size: number }> = {};
+    onProgress?.("5 · 读取云端文件列表…");
     if (repo.remoteSha) {
       const raw = await this.run("gh", ["api", `repos/${repo.owner}/${repo.name}/git/trees/${repo.remoteSha}?recursive=1`]);
       const tree = JSON.parse(raw) as { truncated?: boolean; tree?: Array<{ path: string; type: string; sha?: string; size?: number }> };
@@ -341,6 +411,7 @@ export class GitSetup {
         throw new Error("远端正在跟踪插件的本机凭据文件 data.json。请先从远端历史中处理它，再继续接入。");
       }
     }
+    onProgress?.(`6 · 对比文件与路径：本地 ${localFiles.length} 个，云端 ${remoteFiles.length} 个…`);
     const localSet = new Set(localFiles);
     const remoteSet = new Set(remoteFiles);
     const remoteOnly = remoteFiles.filter((name) => !localSet.has(name));
@@ -362,24 +433,37 @@ export class GitSetup {
     }
     const identicalCount = localFiles.filter((name) => remoteBlobs[name]?.sha.length === 40 &&
       localGitBlobs[name] === remoteBlobs[name].sha).length;
-    const overlaps = relatedHistory ? [] : localFiles.filter((name) => remoteSet.has(name) &&
+    const overlaps = relatedHistory ? [] : localFiles.filter((name) => name !== ".gitignore" && remoteSet.has(name) &&
       (remoteBlobs[name]?.sha.length !== 40 || localGitBlobs[name] !== remoteBlobs[name].sha));
     const prefixCollision = localFiles.some((name) => hasFileAsParent(name, remoteSet)) ||
       remoteFiles.some((name) => hasFileAsParent(name, localSet));
     if (prefixCollision) throw new Error("两端存在同名文件与目录冲突，需要先手动整理后再接入。");
+    onProgress?.("7 · 核对本地与云端的忽略规则及追踪范围…");
     const existingIgnore = await this.readIgnore();
+    let remoteIgnore = "";
+    if (remoteFiles.includes(".gitignore")) {
+      const raw = await this.run("gh", ["api", `repos/${repo.owner}/${repo.name}/git/blobs/${remoteBlobs[".gitignore"].sha}`]);
+      const data = JSON.parse(raw) as { encoding?: string; content?: string };
+      if (data.encoding !== "base64" || typeof data.content !== "string") throw new Error("无法读取远端 .gitignore，请重新检查。");
+      remoteIgnore = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(data.content.replace(/\s/g, ""), "base64"));
+    }
     const nestedRules = nestedGitIgnoreRules(nestedRepos);
     const effectiveIgnore = [...existingIgnore.split(/\r?\n/), ...SETUP_GITIGNORE, ...nestedRules];
-    return {
+    const result: SetupPreview = {
       vaultPath: this.vaultPath, repoUrl: repo.url, branch: repo.branch, remoteSha: repo.remoteSha, alreadyLinked, relatedHistory,
       localRoot, localBranch, origin, localFiles, localSignatures, remoteFiles, remoteBlobs, overlaps, identicalCount,
       remoteOnly,
       localOnly: localFiles.filter((name) => !remoteSet.has(name)),
       missingIgnoreRules: [...missingSetupIgnoreRules(existingIgnore), ...nestedRules.filter((rule) => !existingIgnore.split(/\r?\n/).includes(rule))],
       nestedRepos,
+      localIgnore: existingIgnore, remoteIgnore, trackedLocalFiles: trackedLocal, optimizedIgnore: "",
+      additionalIgnoredLocal: trackedIgnoredLocal.filter((name) => !nestedUserData.has(name) && !shouldIgnore(name, existingIgnore.split(/\r?\n/))),
       trackedExcludedLocal: [...new Set([...trackedIgnoredLocal.filter((name) => !nestedUserData.has(name)), ...trackedLocal.filter((name) => shouldIgnore(name, SETUP_GITIGNORE))])].sort(),
       trackedExcludedRemote: remoteFiles.filter((name) => shouldIgnore(name, effectiveIgnore))
     };
+    applySetupIgnoreBase(result, "local");
+    onProgress?.(`✓ 检查完成：本地 ${localFiles.length} 个文件，云端 ${remoteFiles.length} 个文件，同名差异 ${overlaps.length} 个。`);
+    return result;
   }
 
   async readOverlap(repo: VerifiedRepo, preview: SetupPreview, file: string): Promise<SetupOverlapContent> {
@@ -443,10 +527,19 @@ export class GitSetup {
     author: { name: string; email: string },
     onMutationStart?: () => Promise<void>,
     activelyChangingPaths: ReadonlySet<string> = new Set(),
-    rebuildTracking = false
+    rebuildTracking = false,
+    onProgress?: (stage: string) => void
   ): Promise<string[]> {
+    onProgress?.("核验仓库与授权");
     const verified = await this.verifyRepository(repo.url);
-    const latest = await this.preview(verified);
+    onProgress?.("重新检查两端文件与忽略规则");
+    const latest = await this.preview(verified, message => onProgress?.(`重新检查 · ${message}`));
+    const ignoreDiffers = setupIgnoreDiffers(latest);
+    if (latest.localIgnore !== prior.localIgnore || latest.remoteIgnore !== prior.remoteIgnore) {
+      throw new Error(".gitignore 在预览后发生变化，请重新检查两端规则。");
+    }
+    if (ignoreDiffers && !choices[".gitignore"]) throw new Error("请选择以本机或远端 .gitignore 为基准。");
+    applySetupIgnoreBase(latest, choices[".gitignore"] || "local");
     if (verified.branch !== prior.branch || latest.alreadyLinked !== prior.alreadyLinked ||
         latest.relatedHistory !== prior.relatedHistory ||
         JSON.stringify(latest.remoteFiles) !== JSON.stringify(prior.remoteFiles) ||
@@ -500,11 +593,12 @@ export class GitSetup {
       throw new Error("请填写 Git 提交作者名称和邮箱。");
     }
     await onMutationStart?.();
+    onProgress?.("准备仓库与文件追踪");
     if (!latest.localRoot) await this.run("git", ["init", "-b", repo.branch]);
     await this.run("git", ["config", "user.name", author.name]);
     await this.run("git", ["config", "user.email", author.email]);
     if (!latest.origin) await this.run("git", ["remote", "add", "origin", repo.url]);
-    await this.appendIgnore(latest.nestedRepos);
+    await nodeFs!.writeFile(nodePath!.join(this.vaultPath, ".gitignore"), latest.optimizedIgnore, "utf8");
     if (latest.localRoot) await rebuildNestedRepoTracking(this.vaultPath, latest.nestedRepos, (args) => this.run("git", args));
     let hasHead = false;
     try { await this.run("git", ["rev-parse", "--verify", "HEAD"]); hasHead = true; }
@@ -537,19 +631,25 @@ export class GitSetup {
       for (const batch of pathBatches(changedDuringStage)) await this.run("git", ["reset", "-q", "HEAD", "--", ...batch]);
       for (const file of changedDuringStage) skipped.add(file);
     }
-    if (rebuildTracking && hasHead) await this.rebuildTrackingIndex(latest.trackedExcludedLocal, skipped, latest.nestedRepos);
+    if (rebuildTracking && hasHead) {
+      onProgress?.("重建已有文件的追踪");
+      await this.rebuildTrackingIndex(latest.trackedExcludedLocal, skipped, latest.nestedRepos);
+    }
+    onProgress?.("创建本地提交");
     try {
       await this.run("git", ["diff", "--cached", "--quiet"]);
     } catch {
       await this.run("git", ["commit", "-m", "Simple Link initial vault snapshot"]);
     }
     if (repo.remoteSha) {
-      await this.run("git", ["fetch", "origin", repo.branch]);
+      onProgress?.("Fetch：获取并核验远端提交…");
+      await this.run("git", ["fetch", "--progress", "origin", repo.branch], undefined, gitTransferProgress("Fetch", onProgress));
       const fetchedSha = await this.run("git", ["rev-parse", "FETCH_HEAD"]);
       if (fetchedSha !== repo.remoteSha) throw new Error("远端分支在检查后更新了。尚未合并或推送，请重新预览。");
       let containsRemote = false;
       try { await this.run("git", ["merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD"]); containsRemote = true; } catch { /* needs merge */ }
       if (!containsRemote) {
+        onProgress?.("Merge：合并本地与远端文件…");
         try {
           await this.run("git", latest.relatedHistory
             ? ["merge", "--no-commit", "--no-ff", "FETCH_HEAD"]
@@ -562,9 +662,9 @@ export class GitSetup {
         }
         try {
           const fromRemote = latest.relatedHistory ? [] :
-            [...latest.remoteOnly, ...latest.overlaps.filter((name) => choices[name] === "remote")];
+            [...latest.remoteOnly, ...latest.overlaps.filter((name) => choices[name] === "remote")].filter((name) => name !== ".gitignore");
           for (const batch of pathBatches(fromRemote)) await this.run("git", ["checkout", "FETCH_HEAD", "--", ...batch]);
-          await this.appendIgnore(latest.nestedRepos);
+          await nodeFs!.writeFile(nodePath!.join(this.vaultPath, ".gitignore"), latest.optimizedIgnore, "utf8");
           await this.run("git", ["add", "-A"]);
           if (skipped.size > 0) {
             const stagedPaths = new Set((await this.run("git", ["diff", "--cached", "--name-only", "-z"])).split("\0").filter(Boolean));
@@ -581,7 +681,8 @@ export class GitSetup {
         }
       }
     }
-    await this.run("git", ["push", "-u", "origin", `HEAD:${repo.branch}`]);
+    onProgress?.("首次推送到 GitHub");
+    await this.run("git", ["push", "--progress", "-u", "origin", `HEAD:${repo.branch}`], undefined, gitTransferProgress("Push：首次推送", onProgress));
     return [...skipped].sort();
   }
 }

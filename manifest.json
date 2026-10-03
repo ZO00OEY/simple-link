@@ -1,9 +1,9 @@
 {
   "id": "simple-link",
   "name": "Simple Link",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "minAppVersion": "1.7.2",
-  "description": "跨设备同步插件：移动端连接服务器，桌面端连接 Git/GitHub。",
+  "description": "跨设备同步插件：支持桌面 Git、手机 GitHub API 轻量同步及服务器同步。",
   "author": "ZO.oEY",
   "isDesktopOnly": false
 }

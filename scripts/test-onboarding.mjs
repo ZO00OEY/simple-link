@@ -17,7 +17,7 @@ try {
   const bundle = join(folder, "onboarding.cjs");
   await esbuild.build({ entryPoints: ["src/onboarding.ts"], bundle: true, platform: "node", format: "cjs", outfile: bundle });
   globalThis.require = require;
-  const { GitSetup, parseGithubRepoUrl, explainSetupError, missingSetupIgnoreRules } = require(bundle);
+  const { GitSetup, parseGithubRepoUrl, explainSetupError, missingSetupIgnoreRules, applySetupIgnoreBase } = require(bundle);
   assert.equal(parseGithubRepoUrl("https://github.com/example/vault.git").name, "vault");
   assert.throws(() => parseGithubRepoUrl("https://gitee.com/example/vault"));
   assert.match(explainSetupError(new Error("repository not found")), /地址错误|无权访问/);
@@ -76,7 +76,7 @@ try {
   const originalIgnore = "# personal rules\r\ncustom/\r\n.smart-env\r\n\r\n";
   await writeFile(join(vault, ".gitignore"), originalIgnore);
   const gitCalls = [];
-  const command = async (program, args) => {
+  const command = async (program, args, _timeoutMs, onOutput) => {
     if (program === "gh") {
       if (args[0] === "auth") return "logged in";
       if (args[0] === "repo") return JSON.stringify({ isPrivate: true, viewerPermission: "WRITE", defaultBranchRef: { name: "main" } });
@@ -93,12 +93,28 @@ try {
       throw new Error(`Unexpected gh ${args.join(" ")}`);
     }
     gitCalls.push(args);
+    if (args[0] === "fetch") onOutput?.("Receiving objects: 42% (42/100)\rResolving deltas: 100% (10/10)\n");
+    if (args[0] === "push") onOutput?.("Writing objects: 65% (65/100)\r");
     return run(vault, args);
   };
   const setup = new GitSetup(vault, command);
   const repo = await setup.verifyRepository("https://github.com/example/vault.git");
-  const preview = await setup.preview(repo);
-  assert.deepEqual(preview.overlaps, [".gitignore", "shared.md"]);
+  const previewProgress = [];
+  const preview = await setup.preview(repo, message => previewProgress.push(message));
+  assert.match(previewProgress[0], /检查本地仓库/);
+  assert(previewProgress.some(message => message.includes(`计算本地文件哈希：${preview.localFiles.length} / ${preview.localFiles.length}`)));
+  assert(!previewProgress.some(message => message.includes("Fetch")));
+  assert(previewProgress.some(message => message.includes("读取云端文件列表")));
+  assert(previewProgress.some(message => message.includes("对比文件与路径")));
+  assert.match(previewProgress.at(-1), /^✓ 检查完成/);
+  assert(!gitCalls.some(args => args[0] === "merge"));
+  assert.deepEqual(preview.overlaps, ["shared.md"]);
+  applySetupIgnoreBase(preview, "remote");
+  assert(preview.optimizedIgnore.startsWith("remote-only/"));
+  assert(!preview.optimizedIgnore.includes("custom/"));
+  applySetupIgnoreBase(preview, "local");
+  assert(preview.optimizedIgnore.startsWith(originalIgnore));
+  await assert.rejects(() => setup.finish(repo, preview, { "shared.md": "remote" }, { name: "Test", email: "test@example.com" }), /基准/);
   assert(!preview.overlaps.includes("identical.md"));
   assert.equal(preview.identicalCount, 1);
   assert.deepEqual(preview.localOnly, ["local.md"]);
@@ -106,7 +122,13 @@ try {
   const content = await setup.readOverlap(repo, preview, "shared.md");
   assert.equal(content.local.trim(), "local version");
   assert.equal(content.remote.trim(), "remote version");
-  await setup.finish(repo, preview, { ".gitignore": "local", "shared.md": "remote" }, { name: "Test", email: "test@example.com" });
+  const finishProgress = [];
+  await setup.finish(repo, preview, { ".gitignore": "local", "shared.md": "remote" }, { name: "Test", email: "test@example.com" }, undefined, new Set(), false, message => finishProgress.push(message));
+  assert(finishProgress.some(message => message.includes("计算本地文件哈希")));
+  assert(finishProgress.some(message => message.includes("Fetch：解析差异 100%")));
+  assert(finishProgress.some(message => message.includes("Merge：")));
+  assert(finishProgress.some(message => message.includes("创建本地提交")));
+  assert.equal(finishProgress.at(-1), "Push：首次推送：发送对象 65%…");
   assert.equal((await readFile(join(vault, "shared.md"), "utf8")).trim(), "remote version");
   assert.equal((await readFile(join(vault, "local.md"), "utf8")).trim(), "local only");
   assert.equal((await readFile(join(vault, "remote.md"), "utf8")).trim(), "remote only");
@@ -131,7 +153,17 @@ try {
   await writeFile(join(vault, "local-ahead.md"), "local newer note\n");
   sha = run(folder, ["--git-dir", bare, "rev-parse", "refs/heads/main"]);
   const aheadRepo = await setup.verifyRepository("https://github.com/example/vault.git");
-  const aheadPreview = await setup.preview(aheadRepo);
+  const aheadProgress = [];
+  const headBeforePreview = run(vault, ["rev-parse", "HEAD"]);
+  const statusBeforePreview = run(vault, ["status", "--porcelain"]);
+  const callsBeforePreview = gitCalls.length;
+  const aheadPreview = await setup.preview(aheadRepo, message => aheadProgress.push(message));
+  assert(aheadProgress.some(message => message.includes("Fetch")));
+  assert(aheadProgress.some(message => message.includes("Merge-base")));
+  assert.match(aheadProgress.at(-1), /^✓ 检查完成/);
+  assert.equal(run(vault, ["rev-parse", "HEAD"]), headBeforePreview);
+  assert.equal(run(vault, ["status", "--porcelain"]), statusBeforePreview);
+  assert(!gitCalls.slice(callsBeforePreview).some(args => args[0] === "merge"));
   assert.equal(aheadPreview.alreadyLinked, false);
   assert.equal(aheadPreview.relatedHistory, true);
   assert.deepEqual(aheadPreview.overlaps, []);
@@ -350,12 +382,14 @@ try {
   const unversionedRepo = await unversionedSetup.verifyRepository("https://github.com/example/vault.git");
   const unversionedPreview = await unversionedSetup.preview(unversionedRepo);
   assert.equal(unversionedPreview.localRoot, null);
-  assert.deepEqual(unversionedPreview.overlaps, [".gitignore", "shared.md"]);
+  assert.deepEqual(unversionedPreview.overlaps, ["shared.md"]);
+  applySetupIgnoreBase(unversionedPreview, "remote");
   await unversionedSetup.finish(unversionedRepo, unversionedPreview, { ".gitignore": "remote", "shared.md": "local" }, { name: "Test", email: "test@example.com" });
   assert.equal((await readFile(join(unversionedVault, "shared.md"), "utf8")).trim(), "new local version");
   assert.equal((await readFile(join(unversionedVault, "remote.md"), "utf8")).trim(), "remote only");
   const adoptedIgnore = await readFile(join(unversionedVault, ".gitignore"), "utf8");
-  assert(adoptedIgnore.startsWith(originalIgnore));
+  assert.equal(adoptedIgnore, unversionedPreview.optimizedIgnore);
+  assert(adoptedIgnore.startsWith(unversionedPreview.remoteIgnore));
   assert(!adoptedIgnore.includes("local-unused/"));
   assert.match(adoptedIgnore, /\.obsidian\/plugins\/zoey-sync-test\/data\.json/);
   assert.equal(adoptedIgnore.split(".obsidian/plugins/zoey-sync-test/data.json").length, 2);

@@ -1,12 +1,12 @@
 {
   "name": "simple-link",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Cross-platform sync plugin for Obsidian",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc --noEmit && node esbuild.config.mjs production",
-    "test": "node scripts/test-dirty.mjs && node scripts/test-onboarding.mjs"
+    "test": "node scripts/test-dirty.mjs && node scripts/test-onboarding.mjs && node scripts/test-lightweight-guide.mjs && node scripts/test-mobile-sync.mjs && node scripts/test-mobile-runtime.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",

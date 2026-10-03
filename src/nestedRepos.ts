@@ -1,6 +1,7 @@
 import { DEFAULT_SYNC_IGNORE_PATTERNS, shouldIgnore } from "./dirty";
 
-const nodeRequire = (globalThis as unknown as { require?: (name: string) => unknown }).require;
+const nodeRequire = typeof process !== "undefined" && process.versions?.node
+  ? (globalThis as unknown as { require?: (name: string) => unknown }).require : undefined;
 const fs = nodeRequire ? (nodeRequire("fs") as typeof import("fs")).promises : null;
 const path = nodeRequire ? nodeRequire("path") as typeof import("path") : null;
 

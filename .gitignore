@@ -1,6 +1,14 @@
 node_modules/
-.obsidian/
+.git/
 data.json
+link-state.json
+mobile-ignore.json
+
+link-state.json.recovery
+
 sync-settings.json
+data.json.*
+link-state.json.*
+mobile-ignore.json.*
 npm-debug.log*
 *.log
