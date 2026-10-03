@@ -3466,8 +3466,8 @@ var ZoeySyncPlugin = class extends import_obsidian5.Plugin {
       this.settings.mobile.mode = "github";
     }
     this.settings.inFlight = Array.isArray(this.settings.inFlight) ? this.settings.inFlight : [];
-    this.settings.ignorePatterns = Array.isArray(this.settings.ignorePatterns) ? this.settings.ignorePatterns.filter((pattern) => typeof pattern === "string") : defaultSyncIgnorePatterns(this.app.vault.configDir);
-    this.settings.ignorePatterns = [.../* @__PURE__ */ new Set([...defaultSyncIgnorePatterns(this.app.vault.configDir), ...this.settings.ignorePatterns])];
+    const storedIgnorePatterns = shared?.ignorePatterns ?? saved?.ignorePatterns;
+    this.settings.ignorePatterns = Array.isArray(storedIgnorePatterns) ? storedIgnorePatterns.filter((pattern) => typeof pattern === "string") : defaultSyncIgnorePatterns(this.app.vault.configDir);
     this.settings.errorLogs = Array.isArray(this.settings.errorLogs) ? this.settings.errorLogs : [];
     this.pruneErrorLogs();
     if (!this.settings.lastPullAt) {

@@ -37,6 +37,17 @@ try {
     assert.deepEqual(nodeLoads, [], `${platform}: plugin loads without Node modules`);
     const { LinkPlugin, MobileGithub, blobSha, ZoeySyncConflictPreviewModal, textParts, resolveTextParts } = context.module.exports;
     assert.equal(typeof LinkPlugin, "function");
+    let stored = { ignorePatterns: ["private/", "!private/keep.md"] };
+    const settingsPlugin = { app: { vault: { configDir: ".custom" } },
+      loadData: async () => stored, loadSharedSettings: async () => null,
+      saveSettings: async () => {}, pruneErrorLogs: () => {} };
+    await LinkPlugin.prototype.loadSettings.call(settingsPlugin);
+    assert.deepEqual(Array.from(settingsPlugin.settings.ignorePatterns), stored.ignorePatterns, "explicit ignore choices are preserved");
+    stored = {};
+    await LinkPlugin.prototype.loadSettings.call(settingsPlugin);
+    assert(settingsPlugin.settings.ignorePatterns.includes(".custom/cache/"));
+    assert(settingsPlugin.settings.ignorePatterns.includes(".custom/plugins/simple-link/data.json"));
+    assert(!settingsPlugin.settings.ignorePatterns.some(path => path.startsWith(".obsidian/")));
     const scheduled = [];
     context.window.setInterval = (callback, delay) => { scheduled.push({ callback, delay }); return scheduled.length; };
     context.window.clearInterval = () => {};

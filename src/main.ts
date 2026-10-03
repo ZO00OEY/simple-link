@@ -681,10 +681,10 @@ export default class ZoeySyncPlugin extends Plugin {
     if (!saved?.mobile && this.settings.serverUrl) this.settings.mobile.mode = "server";
     if (this.settings.desktopLightweightEnabled) { this.settings.desktopGitEnabled = false; this.settings.mobile.mode = "github"; }
     this.settings.inFlight = Array.isArray(this.settings.inFlight) ? this.settings.inFlight : [];
-    this.settings.ignorePatterns = Array.isArray(this.settings.ignorePatterns)
-      ? this.settings.ignorePatterns.filter((pattern): pattern is string => typeof pattern === "string")
+    const storedIgnorePatterns = shared?.ignorePatterns ?? saved?.ignorePatterns;
+    this.settings.ignorePatterns = Array.isArray(storedIgnorePatterns)
+      ? storedIgnorePatterns.filter((pattern): pattern is string => typeof pattern === "string")
       : defaultSyncIgnorePatterns(this.app.vault.configDir);
-    this.settings.ignorePatterns = [...new Set([...defaultSyncIgnorePatterns(this.app.vault.configDir), ...this.settings.ignorePatterns])];
     this.settings.errorLogs = Array.isArray(this.settings.errorLogs) ? this.settings.errorLogs : [];
     this.pruneErrorLogs();
     if (!this.settings.lastPullAt) {
