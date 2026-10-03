@@ -1,9 +1,10 @@
-import { DEFAULT_SYNC_IGNORE_PATTERNS, shouldIgnore } from "./dirty";
+import { defaultSyncIgnorePatterns, recommendedIgnoreRules as setupGitIgnore, shouldIgnore } from "./dirty";
+export { recommendedIgnoreRules as setupGitIgnore } from "./dirty";
 import { parseGitStatus } from "./gitStatus";
 import { findNestedRepos, nestedGitIgnoreRules, nestedRepoFiles, rebuildNestedRepoTracking, seedNestedRepoFiles, NestedRepo } from "./nestedRepos";
 
 const nodeRequire = typeof process !== "undefined" && process.versions?.node
-  ? (globalThis as unknown as { require?: (name: string) => unknown }).require : undefined;
+  ? (window as unknown as { require?: (name: string) => unknown }).require : undefined;
 const nodeFs = nodeRequire ? (nodeRequire("fs") as typeof import("fs")).promises : null;
 const nodeFsStream = nodeRequire ? nodeRequire("fs") as typeof import("fs") : null;
 const nodePath = nodeRequire ? nodeRequire("path") as typeof import("path") : null;
@@ -65,47 +66,11 @@ function gitTransferProgress(label: string, report?: (message: string) => void):
   };
 }
 
-export const SETUP_GITIGNORE = [
-  "# Git 元数据",
-  ".git/",
-  "# Obsidian 工作区、回收站与缓存",
-  ".obsidian/cache/",
-  ".obsidian/workspace.json",
-  ".obsidian/workspace-mobile.json",
-  ".obsidian/workspaces/",
-  ".obsidian/trash/",
-  ".trash/",
-  "# 插件生成的本机状态与日志（同步设置保留）",
-  ".obsidian/plugins/zoey-sync-test/data.json",
-  ".obsidian/plugins/simple-one-sync/data.json",
-  ".obsidian/plugins/obsidian-git/data.json",
-  ".obsidian/plugins/recent-files-obsidian/data.json",
-  ".obsidian/plugins/simple-link/data.json",
-  ".obsidian/plugins/simple-link/link-state.json",
-  ".obsidian/plugins/simple-link/link-state.json.recovery",
-  ".obsidian/plugins/simple-link/mobile-ignore.json",
-  "# AI 工具的本机临时产物与会话",
-  ".codex/output/",
-  ".codex/AGENTS.md",
-  ".claudian/sessions/",
-  ".smart-env/",
-  "# Obsidian Git 临时冲突清单",
-  "conflict-files-obsidian-git.md",
-  "# 系统文件",
-  ".DS_Store",
-  "Thumbs.db",
-  "desktop.ini",
-  "# 备份与临时文件",
-  "*.tmp",
-  "*.bak",
-  "# 本机依赖",
-  "node_modules/"
-];
 
 /** Presentation only: keep the original pattern order in the executable plan. */
-export function setupIgnoreRuleGroups(preview: SetupPreview): { title: string; rules: string[] }[] {
+export function setupIgnoreRuleGroups(preview: SetupPreview, configDir: string): { title: string; rules: string[] }[] {
   const groups = [{ title: "Git 元数据（保留内嵌仓库自身历史）", rules: [".git/", ...nestedGitIgnoreRules(preview.nestedRepos)] }];
-  for (const line of SETUP_GITIGNORE) {
+  for (const line of setupGitIgnore(configDir)) {
     if (line === "# Git 元数据" || line === ".git/") continue;
     if (line.startsWith("# ")) groups.push({ title: line.slice(2), rules: [] });
     else groups[groups.length - 1].rules.push(line);
@@ -113,16 +78,16 @@ export function setupIgnoreRuleGroups(preview: SetupPreview): { title: string; r
   return groups;
 }
 
-export function missingSetupIgnoreRules(existing: string): string[] {
+export function missingSetupIgnoreRules(existing: string, configDir: string): string[] {
   const patterns = new Set(existing.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#")));
-  return SETUP_GITIGNORE.filter((line) => !line.startsWith("#") &&
+  return setupGitIgnore(configDir).filter((line) => !line.startsWith("#") &&
     !patterns.has(line) && !(line.endsWith("/") && patterns.has(line.slice(0, -1))));
 }
 
-export function applySetupIgnoreBase(preview: SetupPreview, choice: OverlapChoice): void {
+export function applySetupIgnoreBase(preview: SetupPreview, choice: OverlapChoice, configDir: string): void {
   const base = choice === "remote" ? preview.remoteIgnore : preview.localIgnore;
   const lines = base.split(/\r?\n/);
-  const missing = [...missingSetupIgnoreRules(base), ...nestedGitIgnoreRules(preview.nestedRepos)
+  const missing = [...missingSetupIgnoreRules(base, configDir), ...nestedGitIgnoreRules(preview.nestedRepos)
     .filter((rule) => !lines.includes(rule))];
   const eol = base.includes("\r\n") ? "\r\n" : "\n";
   preview.missingIgnoreRules = missing;
@@ -131,8 +96,8 @@ export function applySetupIgnoreBase(preview: SetupPreview, choice: OverlapChoic
     : base;
   const patterns = preview.optimizedIgnore.split(/\r?\n/);
   preview.trackedExcludedLocal = [...new Set([...preview.additionalIgnoredLocal,
-    ...preview.trackedLocalFiles.filter((name) => shouldIgnore(name, patterns) || shouldIgnore(name, SETUP_GITIGNORE))])].sort();
-  preview.trackedExcludedRemote = preview.remoteFiles.filter((name) => shouldIgnore(name, patterns) || shouldIgnore(name, SETUP_GITIGNORE));
+    ...preview.trackedLocalFiles.filter((name) => shouldIgnore(name, patterns, configDir) || shouldIgnore(name, setupGitIgnore(configDir), configDir))])].sort();
+  preview.trackedExcludedRemote = preview.remoteFiles.filter((name) => shouldIgnore(name, patterns, configDir) || shouldIgnore(name, setupGitIgnore(configDir), configDir));
 }
 
 export function setupIgnoreDiffers(preview: SetupPreview): boolean {
@@ -191,7 +156,7 @@ export function pathBatches(paths: string[]): string[][] {
 }
 
 export class GitSetup {
-  constructor(private vaultPath: string, private run: RunCommand) {
+  constructor(private vaultPath: string, private run: RunCommand, private configDir: string) {
     if (!nodeFs || !nodePath) throw new Error("首次使用引导仅支持桌面端");
   }
 
@@ -271,7 +236,7 @@ export class GitSetup {
   private async localFiles(root: string | null, nestedRepos: readonly NestedRepo[]): Promise<string[]> {
     if (root) {
       const output = await this.run("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]);
-      const nested = await nestedRepoFiles(this.vaultPath, nestedRepos, (args) => this.run("git", args));
+      const nested = await nestedRepoFiles(this.vaultPath, nestedRepos, (args) => this.run("git", args), this.configDir);
       const files: string[] = [];
       for (const name of new Set([...output.split("\0").filter(Boolean), ...nested])) {
         try {
@@ -284,7 +249,7 @@ export class GitSetup {
     try {
       existingIgnore = (await nodeFs!.readFile(nodePath!.join(this.vaultPath, ".gitignore"), "utf8")).split(/\r?\n/);
     } catch { /* no existing .gitignore */ }
-    const patterns = [...DEFAULT_SYNC_IGNORE_PATTERNS, ...existingIgnore];
+    const patterns = [...defaultSyncIgnorePatterns(this.configDir), ...existingIgnore];
     const found: string[] = [];
     const visit = async (folder: string): Promise<void> => {
       for (const item of await nodeFs!.readdir(folder, { withFileTypes: true })) {
@@ -293,7 +258,7 @@ export class GitSetup {
         if (item.name === ".git") {
           continue;
         }
-        if (shouldIgnore(name, patterns)) continue;
+        if (shouldIgnore(name, patterns, this.configDir)) continue;
         if (item.isDirectory()) await visit(absolute);
         else if (item.isFile()) found.push(name);
       }
@@ -327,8 +292,8 @@ export class GitSetup {
       }
     }
     onProgress?.("2 · 扫描本地文件与内嵌仓库…");
-    const nestedRepos = await findNestedRepos(this.vaultPath);
-    const nestedUserData = new Set((await nestedRepoFiles(this.vaultPath, nestedRepos, (args) => this.run("git", args)))
+    const nestedRepos = await findNestedRepos(this.vaultPath, this.configDir);
+    const nestedUserData = new Set((await nestedRepoFiles(this.vaultPath, nestedRepos, (args) => this.run("git", args), this.configDir))
       .filter((name) => nestedRepos.some((repo) => name === `${repo.directory}/data.json`)));
     const localFiles = await this.localFiles(localRoot, nestedRepos);
     const trackedLocal = localRoot
@@ -347,6 +312,7 @@ export class GitSetup {
       const hash = nodeCrypto!.createHash("sha256");
       const gitHash = nodeCrypto!.createHash("sha1").update(`blob ${stat.size}\0`);
       for await (const chunk of nodeFsStream!.createReadStream(nodePath!.join(this.vaultPath, file))) {
+        if (!Buffer.isBuffer(chunk)) throw new Error("无法读取本地文件字节，已停止检查。");
         hash.update(chunk);
         gitHash.update(chunk);
       }
@@ -386,7 +352,7 @@ export class GitSetup {
       throw new Error(`本机当前分支是 ${localBranch}，远端默认分支是 ${repo.branch}。请先切换到要同步的 ${repo.branch} 分支，再重新检查。`);
     }
     if (localRoot) {
-      if (trackedLocal.includes(".obsidian/plugins/simple-one-sync/data.json") || trackedLocal.includes(".obsidian/plugins/zoey-sync-test/data.json")) {
+      if (trackedLocal.includes(`${this.configDir}/plugins/simple-one-sync/data.json`) || trackedLocal.includes(`${this.configDir}/plugins/zoey-sync-test/data.json`)) {
         throw new Error("本地 Git 正在跟踪插件的本机凭据文件 data.json。请先停止跟踪该文件，再继续接入。");
       }
       const staged = await this.run("git", ["ls-files", "--stage", "-z"]);
@@ -407,7 +373,7 @@ export class GitSetup {
         remoteBlobs[item.path] = { sha: item.sha ?? "", size: item.size ?? 0 };
         return item.path;
       }).sort();
-      if (remoteFiles.includes(".obsidian/plugins/simple-one-sync/data.json") || remoteFiles.includes(".obsidian/plugins/zoey-sync-test/data.json")) {
+      if (remoteFiles.includes(`${this.configDir}/plugins/simple-one-sync/data.json`) || remoteFiles.includes(`${this.configDir}/plugins/zoey-sync-test/data.json`)) {
         throw new Error("远端正在跟踪插件的本机凭据文件 data.json。请先从远端历史中处理它，再继续接入。");
       }
     }
@@ -448,20 +414,20 @@ export class GitSetup {
       remoteIgnore = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(data.content.replace(/\s/g, ""), "base64"));
     }
     const nestedRules = nestedGitIgnoreRules(nestedRepos);
-    const effectiveIgnore = [...existingIgnore.split(/\r?\n/), ...SETUP_GITIGNORE, ...nestedRules];
+    const effectiveIgnore = [...existingIgnore.split(/\r?\n/), ...setupGitIgnore(this.configDir), ...nestedRules];
     const result: SetupPreview = {
       vaultPath: this.vaultPath, repoUrl: repo.url, branch: repo.branch, remoteSha: repo.remoteSha, alreadyLinked, relatedHistory,
       localRoot, localBranch, origin, localFiles, localSignatures, remoteFiles, remoteBlobs, overlaps, identicalCount,
       remoteOnly,
       localOnly: localFiles.filter((name) => !remoteSet.has(name)),
-      missingIgnoreRules: [...missingSetupIgnoreRules(existingIgnore), ...nestedRules.filter((rule) => !existingIgnore.split(/\r?\n/).includes(rule))],
+      missingIgnoreRules: [...missingSetupIgnoreRules(existingIgnore, this.configDir), ...nestedRules.filter((rule) => !existingIgnore.split(/\r?\n/).includes(rule))],
       nestedRepos,
       localIgnore: existingIgnore, remoteIgnore, trackedLocalFiles: trackedLocal, optimizedIgnore: "",
-      additionalIgnoredLocal: trackedIgnoredLocal.filter((name) => !nestedUserData.has(name) && !shouldIgnore(name, existingIgnore.split(/\r?\n/))),
-      trackedExcludedLocal: [...new Set([...trackedIgnoredLocal.filter((name) => !nestedUserData.has(name)), ...trackedLocal.filter((name) => shouldIgnore(name, SETUP_GITIGNORE))])].sort(),
-      trackedExcludedRemote: remoteFiles.filter((name) => shouldIgnore(name, effectiveIgnore))
+      additionalIgnoredLocal: trackedIgnoredLocal.filter((name) => !nestedUserData.has(name) && !shouldIgnore(name, existingIgnore.split(/\r?\n/), this.configDir)),
+      trackedExcludedLocal: [...new Set([...trackedIgnoredLocal.filter((name) => !nestedUserData.has(name)), ...trackedLocal.filter((name) => shouldIgnore(name, setupGitIgnore(this.configDir), this.configDir))])].sort(),
+      trackedExcludedRemote: remoteFiles.filter((name) => shouldIgnore(name, effectiveIgnore, this.configDir))
     };
-    applySetupIgnoreBase(result, "local");
+    applySetupIgnoreBase(result, "local", this.configDir);
     onProgress?.(`✓ 检查完成：本地 ${localFiles.length} 个文件，云端 ${remoteFiles.length} 个文件，同名差异 ${overlaps.length} 个。`);
     return result;
   }
@@ -493,7 +459,7 @@ export class GitSetup {
   async appendIgnore(repos: readonly NestedRepo[]): Promise<void> {
     const file = nodePath!.join(this.vaultPath, ".gitignore");
     const existing = await this.readIgnore();
-    const missing = [...missingSetupIgnoreRules(existing), ...nestedGitIgnoreRules(repos).filter((rule) => !existing.split(/\r?\n/).includes(rule))];
+    const missing = [...missingSetupIgnoreRules(existing, this.configDir), ...nestedGitIgnoreRules(repos).filter((rule) => !existing.split(/\r?\n/).includes(rule))];
     if (!missing.length) return;
     const eol = existing.includes("\r\n") ? "\r\n" : "\n";
     const separator = existing ? `${existing.endsWith("\n") ? "" : eol}${eol}` : "";
@@ -506,7 +472,7 @@ export class GitSetup {
       catch { throw new Error(`不能确认 .gitignore 会排除 ${path}，已停止重建 Git 追踪。请检查排除规则后重新预览。`); }
     }
     await this.run("git", ["rm", "-r", "-f", "--cached", "--ignore-unmatch", "--", "."]);
-    await seedNestedRepoFiles(this.vaultPath, repos, (args) => this.run("git", args), skipped);
+    await seedNestedRepoFiles(this.vaultPath, repos, (args) => this.run("git", args), this.configDir, skipped);
     await this.run("git", ["add", "-A"]);
     if (skipped.size) {
       const staged = new Set((await this.run("git", ["diff", "--cached", "--name-only", "-z"])).split("\0").filter(Boolean));
@@ -514,7 +480,7 @@ export class GitSetup {
         await this.run("git", ["reset", "-q", "HEAD", "--", ...batch]);
       }
     }
-    const allowedData = new Set((await nestedRepoFiles(this.vaultPath, repos, (args) => this.run("git", args)))
+    const allowedData = new Set((await nestedRepoFiles(this.vaultPath, repos, (args) => this.run("git", args), this.configDir))
       .filter((name) => repos.some((repo) => name === `${repo.directory}/data.json`)));
     const remaining = (await this.run("git", ["ls-files", "-ci", "--exclude-standard", "-z"])).split("\0").filter((name) => name && !allowedData.has(name));
     if (remaining.length) throw new Error(`重建后仍有 ${remaining.length} 个被忽略的文件受到追踪，请检查 .gitignore 后重试。`);
@@ -539,7 +505,7 @@ export class GitSetup {
       throw new Error(".gitignore 在预览后发生变化，请重新检查两端规则。");
     }
     if (ignoreDiffers && !choices[".gitignore"]) throw new Error("请选择以本机或远端 .gitignore 为基准。");
-    applySetupIgnoreBase(latest, choices[".gitignore"] || "local");
+    applySetupIgnoreBase(latest, choices[".gitignore"] || "local", this.configDir);
     if (verified.branch !== prior.branch || latest.alreadyLinked !== prior.alreadyLinked ||
         latest.relatedHistory !== prior.relatedHistory ||
         JSON.stringify(latest.remoteFiles) !== JSON.stringify(prior.remoteFiles) ||
@@ -599,11 +565,11 @@ export class GitSetup {
     await this.run("git", ["config", "user.email", author.email]);
     if (!latest.origin) await this.run("git", ["remote", "add", "origin", repo.url]);
     await nodeFs!.writeFile(nodePath!.join(this.vaultPath, ".gitignore"), latest.optimizedIgnore, "utf8");
-    if (latest.localRoot) await rebuildNestedRepoTracking(this.vaultPath, latest.nestedRepos, (args) => this.run("git", args));
+    if (latest.localRoot) await rebuildNestedRepoTracking(this.vaultPath, latest.nestedRepos, (args) => this.run("git", args), this.configDir);
     let hasHead = false;
     try { await this.run("git", ["rev-parse", "--verify", "HEAD"]); hasHead = true; }
     catch { /* new repository */ }
-    await seedNestedRepoFiles(this.vaultPath, latest.nestedRepos, (args) => this.run("git", args), skipped);
+    await seedNestedRepoFiles(this.vaultPath, latest.nestedRepos, (args) => this.run("git", args), this.configDir, skipped);
     if (hasHead) await this.run("git", ["add", "-A"]);
     else {
       const included = [...new Set([...latest.localFiles, ".gitignore"])].filter((file) => !skipped.has(file));
@@ -622,7 +588,10 @@ export class GitSetup {
         try {
           const stat = await nodeFs!.stat(nodePath!.join(this.vaultPath, file));
           const hash = nodeCrypto!.createHash("sha256");
-          for await (const chunk of nodeFsStream!.createReadStream(nodePath!.join(this.vaultPath, file))) hash.update(chunk);
+          for await (const chunk of nodeFsStream!.createReadStream(nodePath!.join(this.vaultPath, file))) {
+            if (!Buffer.isBuffer(chunk)) throw new Error("无法读取本地文件字节，已停止检查。");
+            hash.update(chunk);
+          }
           if (`${stat.size}:${hash.digest("hex")}` !== latest.localSignatures[file] && file !== ".gitignore") changedDuringStage.push(file);
         } catch {
           if (latest.localSignatures[file]) changedDuringStage.push(file);

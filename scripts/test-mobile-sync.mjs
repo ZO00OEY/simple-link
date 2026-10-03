@@ -98,6 +98,24 @@ try {
         const parent = head; root = `t${++treeIndex}`; trees.set(root, next); head = `c${++commitIndex}`; commits.set(head, { tree: root, parent });
       } };
   }
+  // Malformed successful API responses must never become inferred deletions.
+  {
+    const f = await fixture({ "keep.md": "keep" }, { "keep.md": "keep" });
+    const upstream = globalThis.githubRequest;
+    const invalidTrees = [undefined, null, {}, { truncated: false },
+      { truncated: false, tree: [{ path: "keep.md", sha: "x", mode: "100644", type: "unexpected" }] },
+      { truncated: false, tree: [{ path: "../outside.md", sha: "x", mode: "100644", type: "blob" }] }];
+    const writesBefore = f.calls.filter(call => call.method !== "GET").length;
+    for (const json of invalidTrees) {
+      globalThis.githubRequest = async request => request.url.includes("/git/trees/")
+        ? { status: 200, headers: {}, json } : upstream(request);
+      await assert.rejects(f.engine.preview(), /响应|清单|目录条目|路径/);
+      assert.equal(f.local.get("keep.md").bytes.toString(), "keep");
+      assert.equal(f.calls.filter(call => call.method !== "GET").length, writesBefore);
+    }
+    globalThis.githubRequest = upstream;
+  }
+
   async function align(f) {
     let plan = await f.engine.preview();
     assert.equal(plan.conflicts.length, 0, "identical files establish a baseline without choices");

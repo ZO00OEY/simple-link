@@ -32,7 +32,7 @@
   gap: 10px;
 }
 
-.zoey-sync-settings button.zoey-sync-page-link {
+.zoey-sync-settings button.zoey-sync-page-link.zoey-sync-page-link {
   display: grid;
   width: 100%;
   height: auto;
@@ -45,7 +45,7 @@
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
   box-sizing: border-box;
-  box-shadow: none !important;
+  box-shadow: none;
   background-color: var(--background-secondary);
   color: var(--text-normal);
   line-height: normal;
@@ -168,8 +168,8 @@
   background: var(--background-primary);
 }
 
-.zoey-sync-mobile-guide__ready {
-  color: var(--text-success) !important;
+.zoey-sync-mobile-guide__ready.zoey-sync-mobile-guide__ready {
+  color: var(--text-success);
 }
 
 .zoey-sync-mobile-guide__setup-hint button {
@@ -747,7 +747,7 @@
   background: color-mix(in srgb, var(--background-modifier-hover) 72%, transparent);
 }
 
-.zoey-sync-view button.zoey-sync-view__mode-choice {
+.zoey-sync-view button.zoey-sync-view__mode-choice.zoey-sync-view__mode-choice {
   display: grid;
   width: 28px;
   height: 28px;
@@ -756,8 +756,8 @@
   padding: 0;
   border: 0;
   border-radius: 7px;
-  box-shadow: none !important;
-  background-color: transparent !important;
+  box-shadow: none;
+  background-color: transparent;
   color: var(--text-faint);
   appearance: none;
   transition:
@@ -766,20 +766,20 @@
     box-shadow 120ms ease;
 }
 
-.zoey-sync-view button.zoey-sync-view__mode-choice:hover {
-  background-color: color-mix(in srgb, var(--background-primary) 48%, transparent) !important;
+.zoey-sync-view button.zoey-sync-view__mode-choice.zoey-sync-view__mode-choice:hover {
+  background-color: color-mix(in srgb, var(--background-primary) 48%, transparent);
   color: var(--text-normal);
 }
 
-.zoey-sync-view button.zoey-sync-view__mode-choice.is-active {
-  background-color: var(--background-primary) !important;
+.zoey-sync-view button.zoey-sync-view__mode-choice.is-active.is-active {
+  background-color: var(--background-primary);
   color: var(--text-normal);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.14);
 }
 
-.zoey-sync-view button.zoey-sync-view__mode-choice:focus-visible {
+.zoey-sync-view button.zoey-sync-view__mode-choice.zoey-sync-view__mode-choice:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 38%, transparent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 38%, transparent);
 }
 
 .zoey-sync-view__mode-choice svg {
@@ -812,7 +812,7 @@
   justify-content: space-between;
 }
 
-.zoey-sync-view button.zoey-sync-view__section-action {
+.zoey-sync-view button.zoey-sync-view__section-action.zoey-sync-view__section-action {
   display: inline-flex;
   min-width: 62px;
   min-height: 28px;
@@ -822,10 +822,10 @@
   padding: 4px 12px;
   border: 0;
   border-radius: 7px;
-  background-color: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary)) !important;
+  background-color: color-mix(in srgb, var(--interactive-accent) 14%, var(--background-primary));
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--interactive-accent) 10%, transparent),
-    0 1px 2px rgba(0, 0, 0, 0.05) !important;
+    0 1px 2px rgba(0, 0, 0, 0.05);
   color: var(--interactive-accent);
   font-size: var(--font-ui-small);
   font-weight: var(--font-semibold);
@@ -836,22 +836,22 @@
     opacity 120ms ease;
 }
 
-.zoey-sync-view button.zoey-sync-view__section-action:hover:not(:disabled) {
-  background-color: color-mix(in srgb, var(--interactive-accent) 20%, var(--background-primary)) !important;
+.zoey-sync-view button.zoey-sync-view__section-action.zoey-sync-view__section-action:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--interactive-accent) 20%, var(--background-primary));
 }
 
-.zoey-sync-view button.zoey-sync-view__section-action:active:not(:disabled) {
-  background-color: color-mix(in srgb, var(--interactive-accent) 25%, var(--background-primary)) !important;
+.zoey-sync-view button.zoey-sync-view__section-action.zoey-sync-view__section-action:active:not(:disabled) {
+  background-color: color-mix(in srgb, var(--interactive-accent) 25%, var(--background-primary));
 }
 
-.zoey-sync-view button.zoey-sync-view__section-action:focus-visible {
+.zoey-sync-view button.zoey-sync-view__section-action.zoey-sync-view__section-action:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 32%, transparent) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--interactive-accent) 32%, transparent);
 }
 
-.zoey-sync-view button.zoey-sync-view__section-action:disabled {
-  background-color: var(--background-modifier-hover) !important;
-  box-shadow: none !important;
+.zoey-sync-view button.zoey-sync-view__section-action.zoey-sync-view__section-action:disabled {
+  background-color: var(--background-modifier-hover);
+  box-shadow: none;
   color: var(--text-faint);
   opacity: 1;
 }
@@ -1719,16 +1719,14 @@
   margin-top: 12px;
 }
 
-.zoey-sync-setup-detail > h4 {
-  margin: 0 0 12px !important;
-  padding: 0 !important;
-  text-indent: 0;
+.zoey-sync-setup-detail.zoey-sync-setup-detail > h4 {
+  margin: 0 0 12px;
+  padding: 0;
 }
 
 .zoey-sync-setup-detail > p {
   margin: 10px 0;
   padding: 0;
-  text-indent: 0;
 }
 
 .zoey-sync-setup-auth > .setting-item {
@@ -2062,7 +2060,6 @@
 .modal.mod-settings .vertical-tab-content.zoey-sync-setup-page :is(.zoey-sync-page-title, .zoey-sync-setup-step-title, .zoey-sync-setup-body h4) {
   margin-inline: 0;
   padding-inline: 0;
-  text-indent: 0;
 }
 
 .zoey-sync-setup-platform {
@@ -2311,10 +2308,10 @@
   margin-top: 20px;
 }
 
-.zoey-sync-setup-page .zoey-sync-setup-detail > h4,
-.zoey-sync-setup-page .zoey-sync-setup-section-header h4,
-.zoey-sync-setup-page .zoey-sync-setup-body > h4 {
-  margin: 0 0 8px !important;
+.zoey-sync-setup-page .zoey-sync-setup-detail.zoey-sync-setup-detail > h4,
+.zoey-sync-setup-page .zoey-sync-setup-section-header.zoey-sync-setup-section-header h4,
+.zoey-sync-setup-page .zoey-sync-setup-body.zoey-sync-setup-body > h4 {
+  margin: 0 0 8px;
   font-size: 13px;
   font-weight: var(--font-semibold);
   line-height: 1.4;
@@ -2691,7 +2688,6 @@
 .zoey-sync-settings .simple-link-cloud-plugins p {
   margin: 8px 0;
   padding: 0;
-  text-indent: 0;
 }
 .zoey-sync-settings .simple-link-cloud-plugins .setting-item.simple-link-cloud-plugin-row {
   display: flex;
@@ -2892,7 +2888,7 @@
 .zoey-sync-preview__mobile-block-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 0 12px 12px; }
 
 /* Full-screen phone review, with theme-based text colors. */
-.modal-container:has(.is-mobile-review-modal) { padding: 0; }
+.modal-container.simple-link-mobile-review-container { padding: 0; }
 .zoey-sync-preview-modal.is-mobile-review-modal { position: fixed; inset: 0; width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; border-radius: 0; }
 .is-mobile-review-modal .modal-close-button { display: none; }
 .zoey-sync-preview-modal.is-mobile-review-modal .modal-content { height: 100%; max-height: none; margin: 0; }
@@ -2901,7 +2897,7 @@
 .zoey-sync-preview__header button.zoey-sync-preview__clear { min-height: 36px; padding: 6px 10px; border: 0; border-radius: 9px; box-shadow: none; color: var(--text-muted); background: var(--background-secondary); font-size: var(--font-ui-smaller); }
 .zoey-sync-preview.is-mobile-review .zoey-sync-preview__reason { display: none; }
 .zoey-sync-preview.is-mobile-review .zoey-sync-preview__delete-status { color: var(--text-error, var(--color-red)); font-size: var(--font-ui-smaller); margin-bottom: 6px; }
-.zoey-sync-preview__mobile-content .zoey-sync-preview__side-label { color: var(--text-normal) !important; }
+.zoey-sync-preview__mobile-content .zoey-sync-preview__side-label.zoey-sync-preview__side-label { color: var(--text-normal); }
 .zoey-sync-preview__mobile-content .zoey-sync-preview__side-content { color: var(--text-normal); font-size: var(--font-ui-small); }
 .zoey-sync-preview__mobile-block-choices { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .zoey-sync-preview.is-mobile-review .zoey-sync-preview__mobile-block-choices button { font-size: var(--font-ui-smaller); padding: 6px 2px; white-space: normal; }
@@ -2932,19 +2928,19 @@
 .zoey-sync-preview button.zoey-sync-preview__segment.is-delete { color: var(--text-error, var(--color-red)); }
 
 /* Keep content previews at the same small UI scale on both platforms. */
-.zoey-sync-preview :is(.zoey-sync-preview__whole-content, .zoey-sync-preview__side-content, .zoey-sync-preview__editor) {
+ .zoey-sync-preview__editor.zoey-sync-preview :is(.zoey-sync-preview__whole-content, .zoey-sync-preview__side-content, .zoey-sync-preview__editor) {
   font-family: var(--font-interface);
-  font-size: var(--font-ui-smaller) !important;
+  font-size: var(--font-ui-smaller);
   font-weight: normal;
   line-height: 1.6;
-  color: var(--text-normal) !important;
+  color: var(--text-normal);
 }
-.zoey-sync-preview :is(.zoey-sync-preview__whole-details h4, .zoey-sync-preview__side-label, .zoey-sync-preview__result-label) {
+ .zoey-sync-preview__result-label.zoey-sync-preview :is(.zoey-sync-preview__whole-details h4, .zoey-sync-preview__side-label, .zoey-sync-preview__result-label) {
   font-family: var(--font-interface);
-  font-size: var(--font-ui-smaller) !important;
+  font-size: var(--font-ui-smaller);
   font-weight: normal;
   line-height: 1.6;
-  color: var(--text-normal) !important;
+  color: var(--text-normal);
 }
 .zoey-sync-preview__whole-details h4 { margin: 0 0 8px; }
 .zoey-sync-preview__whole-content { margin: 0 0 12px; }
@@ -2953,12 +2949,12 @@
 .zoey-sync-preview__title-number { color: var(--color-red); }
 .zoey-sync-preview__toolbar { justify-content: flex-end; }
 /* Binary/large-file messages use the same small typography as preview contents. */
-.zoey-sync-preview .zoey-sync-preview__whole-details > div {
+.zoey-sync-preview .zoey-sync-preview__whole-details.zoey-sync-preview__whole-details > div {
   font-family: var(--font-interface);
-  font-size: var(--font-ui-smaller) !important;
+  font-size: var(--font-ui-smaller);
   font-weight: normal;
   line-height: 1.6;
-  color: var(--text-normal) !important;
+  color: var(--text-normal);
 }
 
 /* Desktop block bodies stay inside their selectable columns. */
@@ -3053,3 +3049,5 @@
   background: var(--background-primary);
   color: var(--text-normal);
 }
+.simple-link-hidden { display: none; }
+.simple-link-settings-render { display: block; border: 0; padding: 0; }

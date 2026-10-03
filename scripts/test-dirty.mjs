@@ -13,7 +13,11 @@ async function loadModule(entryPoint) {
   return await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
 }
 
-const module = await loadModule("src/dirty.ts");
+const raw = await loadModule("src/dirty.ts");
+const module = { ...raw, shouldIgnore: (path, patterns = raw.defaultSyncIgnorePatterns(".obsidian")) => raw.shouldIgnore(path, patterns, ".obsidian") };
+assert(raw.shouldIgnore(".custom/plugins/simple-link/data.json", ["!.custom/plugins/simple-link/data.json"], ".custom"));
+assert(raw.shouldIgnore(".custom/cache/x", raw.defaultSyncIgnorePatterns(".custom"), ".custom"));
+assert(!raw.shouldIgnore("notes/cache/x", raw.defaultSyncIgnorePatterns(".custom"), ".custom"));
 
 assert.deepEqual(module.coalesceDirty([], { type: "add", path: "a.md" }), [
   { type: "add", path: "a.md" }
@@ -136,3 +140,11 @@ assert.equal(
 );
 assert.equal(gitError.describeGitError("fatal: bad revision"), "fatal: bad revision");
 console.log("dirty queue, git status, conflict, and Git error checks passed");
+
+const link = await loadModule("src/linkDiff.ts");
+const customOptions = { ...link.DEFAULT_MOBILE_OPTIONS, syncPlugins: true, plugins: ["simple-link"], ignorePatterns: ["!.custom/cache/**", "!.custom/plugins/simple-link/data.json", "!.custom/plugins/simple-link/link-state.json"] };
+for (const path of [".custom/cache/x", ".custom/plugins/simple-link/data.json", ".custom/plugins/simple-link/link-state.json", ".custom/plugins/simple-link/link-state.json.recovery"]) {
+  assert.equal(link.included(path, customOptions, ".custom", "simple-link"), false);
+}
+assert.equal(link.included(".custom/plugins/simple-link/sync-settings.json", customOptions, ".custom", "simple-link"), true);
+assert.equal(link.included("notes/keep.md", customOptions, ".custom", "simple-link"), true);

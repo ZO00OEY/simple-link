@@ -163,7 +163,7 @@ export function renderMobileSettings(root: HTMLElement, host: MobileHost, guide 
   if (guide) {
     const steps = root.createEl("ol");
     steps.createEl("li", { text: "在手机安装并启用 Simple Link，选择 GitHub API 模式。" });
-    steps.createEl("li", { text: "填写仓库 HTTPS 地址及 Token。Token 需授予目标仓库 Contents 读写权限。" });
+    steps.createEl("li", { text: "填写仓库 HTTPS 地址及 token。token 需授予目标仓库 contents 读写权限。" });
     steps.createEl("li", { text: "核验仓库，然后确认图片、插件、缓存和路径追踪选项。" });
     steps.createEl("li", { text: "绑定后手动同步，检查首次预览和同名冲突。首次缺失文件不会被当成删除。" });
   }
@@ -184,7 +184,7 @@ export function renderMobileSettings(root: HTMLElement, host: MobileHost, guide 
     if (!quota.settingEl.isConnected) { unsubscribe(); quotaObserver.disconnect(); }
   });
   quotaObserver.observe(root.ownerDocument.body, { childList: true, subtree: true });
-  new Setting(account).setName("GitHub Token").setDesc("只保存在本机插件数据中，不写入共享配置。")
+  new Setting(account).setName("GitHub token").setDesc("只保存在本机插件数据中，不写入共享配置。")
     .addText((text) => { text.inputEl.type = "password"; text.setValue(options.token).onChange(async (value) => { options.token = value.trim(); engine.resetRemaining(); await host.save(); }); }).settingEl.addClass("simple-link-lightweight-account-input");
   new Setting(account).setName("仓库地址").addText((text) => text.setPlaceholder("https://github.com/用户名/仓库.git")
     .setValue(options.repoUrl).onChange(async (value) => { options.repoUrl = value.trim(); options.bound = false; await host.save(); })).settingEl.addClass("simple-link-lightweight-account-input");
@@ -198,7 +198,7 @@ export function renderMobileSettings(root: HTMLElement, host: MobileHost, guide 
   const report = (message: string, error = false): void => {
     status.hidden = false; status.setText(message); status.toggleClass("zoey-sync-setup-error", error);
   };
-  new Setting(account).setName("核验仓库与 Token").setDesc("只读取指定仓库信息和文件树，不列出账号全部仓库，不下载正文。")
+  new Setting(account).setName("核验仓库与 token").setDesc("只读取指定仓库信息和文件树，不列出账号全部仓库，不下载正文。")
     .addButton((button) => button.setButtonText("检查").setDisabled(!host.active()).onClick(async () => {
       button.setDisabled(true);
       report("正在检查 Token 与仓库…");
@@ -221,5 +221,5 @@ export function renderMobileSettings(root: HTMLElement, host: MobileHost, guide 
     .addTextArea((text) => text.setValue(options.ignorePatterns.join("\n")).onChange(async (value) => {
       options.ignorePatterns = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean); await persist();
     }));
-  if (guide) root.createEl("h3", { text: "3 · Link Diff 缓存与路径" });
+  if (guide) root.createEl("h3", { text: "3 · link diff 缓存与路径" });
 }

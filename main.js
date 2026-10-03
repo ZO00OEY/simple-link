@@ -26,36 +26,49 @@ module.exports = __toCommonJS(main_exports);
 var import_obsidian5 = require("obsidian");
 
 // src/dirty.ts
-var DEFAULT_SYNC_IGNORE_PATTERNS = [
-  ".git/",
-  ".zoey-sync/",
-  ".obsidian/cache/",
-  ".obsidian/workspace.json",
-  ".obsidian/workspaces/",
-  ".obsidian/trash/",
-  ".obsidian/plugins/obsidian-git/data.json",
-  ".DS_Store",
-  "Thumbs.db",
-  "desktop.ini",
-  "*.bak",
-  "*.tmp",
-  "conflict-files-obsidian-git.md",
-  ".smart-env/",
-  ".obsidian/plugins/recent-files-obsidian/data.json",
-  ".obsidian/workspace-mobile.json",
-  ".obsidian/plugins/zoey-sync-test/data.json",
-  ".obsidian/plugins/simple-one-sync/data.json",
-  ".obsidian/plugins/simple-sync/data.json",
-  ".obsidian/plugins/simple-link/data.json",
-  ".obsidian/plugins/simple-link/link-state.json",
-  ".obsidian/plugins/simple-link/link-state.json.recovery",
-  ".obsidian/plugins/simple-link/mobile-ignore.json",
-  "node_modules/",
-  ".trash/",
-  ".claudian/sessions/",
-  ".codex/AGENTS.md",
-  ".codex/output/"
-];
+function recommendedIgnoreRules(configDir) {
+  return [
+    "# Git \u5143\u6570\u636E",
+    ".git/",
+    ".zoey-sync/",
+    "# Obsidian \u5DE5\u4F5C\u533A\u3001\u56DE\u6536\u7AD9\u4E0E\u7F13\u5B58",
+    `${configDir}/cache/`,
+    `${configDir}/workspace.json`,
+    `${configDir}/workspace-mobile.json`,
+    `${configDir}/workspaces/`,
+    `${configDir}/trash/`,
+    ".trash/",
+    "# \u63D2\u4EF6\u751F\u6210\u7684\u672C\u673A\u72B6\u6001\u4E0E\u65E5\u5FD7\uFF08\u540C\u6B65\u8BBE\u7F6E\u4FDD\u7559\uFF09",
+    `${configDir}/plugins/zoey-sync-test/data.json`,
+    `${configDir}/plugins/simple-one-sync/data.json`,
+    `${configDir}/plugins/simple-sync/data.json`,
+    `${configDir}/plugins/obsidian-git/data.json`,
+    `${configDir}/plugins/recent-files-obsidian/data.json`,
+    `${configDir}/plugins/simple-link/data.json`,
+    `${configDir}/plugins/simple-link/link-state.json`,
+    `${configDir}/plugins/simple-link/link-state.json.recovery`,
+    `${configDir}/plugins/simple-link/mobile-ignore.json`,
+    "# AI \u5DE5\u5177\u7684\u672C\u673A\u4E34\u65F6\u4EA7\u7269\u4E0E\u4F1A\u8BDD",
+    ".codex/output/",
+    ".codex/AGENTS.md",
+    ".claudian/sessions/",
+    ".smart-env/",
+    "# Obsidian Git \u4E34\u65F6\u51B2\u7A81\u6E05\u5355",
+    "conflict-files-obsidian-git.md",
+    "# \u7CFB\u7EDF\u6587\u4EF6",
+    ".DS_Store",
+    "Thumbs.db",
+    "desktop.ini",
+    "# \u5907\u4EFD\u4E0E\u4E34\u65F6\u6587\u4EF6",
+    "*.tmp",
+    "*.bak",
+    "# \u672C\u673A\u4F9D\u8D56",
+    "node_modules/"
+  ];
+}
+function defaultSyncIgnorePatterns(configDir) {
+  return recommendedIgnoreRules(configDir).filter((line) => !line.startsWith("#"));
+}
 function globToRegex(pattern) {
   let source = "";
   for (let index = 0; index < pattern.length; index += 1) {
@@ -87,9 +100,9 @@ function matchesIgnorePattern(path2, rawPattern) {
   const suffix = directoryOnly ? "(?:/.*)?$" : "$";
   return new RegExp(`${prefix}${globToRegex(pattern)}${suffix}`).test(path2);
 }
-function shouldIgnore(path2, patterns = DEFAULT_SYNC_IGNORE_PATTERNS) {
+function shouldIgnore(path2, patterns, configDir) {
   const normalized = path2.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
-  if (normalized === ".obsidian/plugins/simple-link/data.json") return true;
+  if (configDir && normalized === `${configDir}/plugins/simple-link/data.json`) return true;
   let ignored = false;
   for (const rawPattern of patterns) {
     const pattern = rawPattern.trim();
@@ -401,10 +414,12 @@ var ZoeySyncConflictPreviewModal = class extends import_obsidian.Modal {
     this.active = true;
     this.modalEl.addClass("zoey-sync-preview-modal");
     this.modalEl.toggleClass("is-mobile-review-modal", this.compact());
+    this.modalEl.parentElement?.toggleClass("simple-link-mobile-review-container", this.compact());
     this.contentEl.toggleClass("is-mobile-review", this.compact());
     this.render(false);
   }
   onClose() {
+    this.modalEl.parentElement?.removeClass("simple-link-mobile-review-container");
     this.active = false;
     this.resolve?.(null);
     this.resolve = void 0;
@@ -895,10 +910,10 @@ var SetupDifferencesModal = class extends import_obsidian2.Modal {
 };
 
 // src/nestedRepos.ts
-var nodeRequire = typeof process !== "undefined" && process.versions?.node ? globalThis.require : void 0;
+var nodeRequire = typeof process !== "undefined" && process.versions?.node ? window.require : void 0;
 var fs = nodeRequire ? nodeRequire("fs").promises : null;
 var path = nodeRequire ? nodeRequire("path") : null;
-async function findNestedRepos(vaultPath) {
+async function findNestedRepos(vaultPath, configDir) {
   if (!fs || !path) throw new Error("\u5185\u5D4C\u4ED3\u5E93\u68C0\u67E5\u4EC5\u652F\u6301\u684C\u9762\u7AEF");
   const found = [];
   const visit = async (folder) => {
@@ -911,7 +926,7 @@ async function findNestedRepos(vaultPath) {
       if (!entry.isDirectory() || entry.name === ".git") continue;
       const absolute = path.join(folder, entry.name);
       const relative = path.relative(vaultPath, absolute).replace(/\\/g, "/");
-      if (!shouldIgnore(relative, DEFAULT_SYNC_IGNORE_PATTERNS)) await visit(absolute);
+      if (!shouldIgnore(relative, defaultSyncIgnorePatterns(configDir), configDir)) await visit(absolute);
     }
   };
   await visit(vaultPath);
@@ -920,7 +935,7 @@ async function findNestedRepos(vaultPath) {
 function nestedGitIgnoreRules(repos) {
   return repos.map((repo) => `/${repo.directory}/.git${repo.gitIsDirectory ? "/" : ""}`);
 }
-async function nestedRepoFiles(vaultPath, repos, git) {
+async function nestedRepoFiles(vaultPath, repos, git, configDir) {
   if (!path || !fs) throw new Error("\u5185\u5D4C\u4ED3\u5E93\u68C0\u67E5\u4EC5\u652F\u6301\u684C\u9762\u7AEF");
   const files = [];
   let vaultIgnore = [];
@@ -941,7 +956,7 @@ async function nestedRepoFiles(vaultPath, repos, git) {
       }
     }
     const data = `${repo.directory}/data.json`;
-    if (/^\.obsidian\/plugins\/[^/]+$/.test(repo.directory) && !shouldIgnore(data, [...DEFAULT_SYNC_IGNORE_PATTERNS, ...vaultIgnore])) {
+    if (repo.directory.startsWith(`${configDir}/plugins/`) && repo.directory.slice(`${configDir}/plugins/`.length).split("/").length === 1 && !shouldIgnore(data, [...defaultSyncIgnorePatterns(configDir), ...vaultIgnore], configDir)) {
       try {
         if ((await fs.lstat(path.join(vaultPath, data))).isFile()) files.push(data);
       } catch {
@@ -950,10 +965,10 @@ async function nestedRepoFiles(vaultPath, repos, git) {
   }
   return [...new Set(files)].sort();
 }
-async function seedNestedRepoFiles(vaultPath, repos, git, skip = /* @__PURE__ */ new Set()) {
+async function seedNestedRepoFiles(vaultPath, repos, git, configDir, skip = /* @__PURE__ */ new Set()) {
   if (!fs || !path) throw new Error("\u5185\u5D4C\u4ED3\u5E93\u68C0\u67E5\u4EC5\u652F\u6301\u684C\u9762\u7AEF");
   const tracked = new Set((await git(["ls-files", "--cached", "-z"])).split("\0").filter(Boolean));
-  const candidates = await nestedRepoFiles(vaultPath, repos, git);
+  const candidates = await nestedRepoFiles(vaultPath, repos, git, configDir);
   const stage = async (file) => {
     const info = await fs.stat(path.join(vaultPath, file));
     const mode = info.mode & 73 ? "100755" : "100644";
@@ -971,7 +986,7 @@ async function seedNestedRepoFiles(vaultPath, repos, git, skip = /* @__PURE__ */
     if (candidates.includes(data) && !tracked.has(data) && !skip.has(data)) await stage(data);
   }
 }
-async function rebuildNestedRepoTracking(vaultPath, repos, git) {
+async function rebuildNestedRepoTracking(vaultPath, repos, git, configDir) {
   if (!repos.length) return 0;
   if (fs && path) {
     try {
@@ -992,8 +1007,8 @@ async function rebuildNestedRepoTracking(vaultPath, repos, git) {
       await git(["rm", "-f", "--cached", "--", repo.directory]);
     }
   }
-  await seedNestedRepoFiles(vaultPath, repos, git);
-  const files = await nestedRepoFiles(vaultPath, repos, git);
+  await seedNestedRepoFiles(vaultPath, repos, git, configDir);
+  const files = await nestedRepoFiles(vaultPath, repos, git, configDir);
   for (const repo of repos) {
     if (files.some((file) => file.startsWith(`${repo.directory}/`)) || [...before].some((file) => file.startsWith(`${repo.directory}/`))) {
       await git(["add", "-A", "--", repo.directory]);
@@ -1009,7 +1024,7 @@ async function rebuildNestedRepoTracking(vaultPath, repos, git) {
 }
 
 // src/onboarding.ts
-var nodeRequire2 = typeof process !== "undefined" && process.versions?.node ? globalThis.require : void 0;
+var nodeRequire2 = typeof process !== "undefined" && process.versions?.node ? window.require : void 0;
 var nodeFs = nodeRequire2 ? nodeRequire2("fs").promises : null;
 var nodeFsStream = nodeRequire2 ? nodeRequire2("fs") : null;
 var nodePath = nodeRequire2 ? nodeRequire2("path") : null;
@@ -1023,68 +1038,32 @@ function gitTransferProgress(label, report) {
     report?.(`${label}\uFF1A${phase} ${latest[2]}%\u2026`);
   };
 }
-var SETUP_GITIGNORE = [
-  "# Git \u5143\u6570\u636E",
-  ".git/",
-  "# Obsidian \u5DE5\u4F5C\u533A\u3001\u56DE\u6536\u7AD9\u4E0E\u7F13\u5B58",
-  ".obsidian/cache/",
-  ".obsidian/workspace.json",
-  ".obsidian/workspace-mobile.json",
-  ".obsidian/workspaces/",
-  ".obsidian/trash/",
-  ".trash/",
-  "# \u63D2\u4EF6\u751F\u6210\u7684\u672C\u673A\u72B6\u6001\u4E0E\u65E5\u5FD7\uFF08\u540C\u6B65\u8BBE\u7F6E\u4FDD\u7559\uFF09",
-  ".obsidian/plugins/zoey-sync-test/data.json",
-  ".obsidian/plugins/simple-one-sync/data.json",
-  ".obsidian/plugins/obsidian-git/data.json",
-  ".obsidian/plugins/recent-files-obsidian/data.json",
-  ".obsidian/plugins/simple-link/data.json",
-  ".obsidian/plugins/simple-link/link-state.json",
-  ".obsidian/plugins/simple-link/link-state.json.recovery",
-  ".obsidian/plugins/simple-link/mobile-ignore.json",
-  "# AI \u5DE5\u5177\u7684\u672C\u673A\u4E34\u65F6\u4EA7\u7269\u4E0E\u4F1A\u8BDD",
-  ".codex/output/",
-  ".codex/AGENTS.md",
-  ".claudian/sessions/",
-  ".smart-env/",
-  "# Obsidian Git \u4E34\u65F6\u51B2\u7A81\u6E05\u5355",
-  "conflict-files-obsidian-git.md",
-  "# \u7CFB\u7EDF\u6587\u4EF6",
-  ".DS_Store",
-  "Thumbs.db",
-  "desktop.ini",
-  "# \u5907\u4EFD\u4E0E\u4E34\u65F6\u6587\u4EF6",
-  "*.tmp",
-  "*.bak",
-  "# \u672C\u673A\u4F9D\u8D56",
-  "node_modules/"
-];
-function setupIgnoreRuleGroups(preview) {
+function setupIgnoreRuleGroups(preview, configDir) {
   const groups = [{ title: "Git \u5143\u6570\u636E\uFF08\u4FDD\u7559\u5185\u5D4C\u4ED3\u5E93\u81EA\u8EAB\u5386\u53F2\uFF09", rules: [".git/", ...nestedGitIgnoreRules(preview.nestedRepos)] }];
-  for (const line of SETUP_GITIGNORE) {
+  for (const line of recommendedIgnoreRules(configDir)) {
     if (line === "# Git \u5143\u6570\u636E" || line === ".git/") continue;
     if (line.startsWith("# ")) groups.push({ title: line.slice(2), rules: [] });
     else groups[groups.length - 1].rules.push(line);
   }
   return groups;
 }
-function missingSetupIgnoreRules(existing) {
+function missingSetupIgnoreRules(existing, configDir) {
   const patterns = new Set(existing.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#")));
-  return SETUP_GITIGNORE.filter((line) => !line.startsWith("#") && !patterns.has(line) && !(line.endsWith("/") && patterns.has(line.slice(0, -1))));
+  return recommendedIgnoreRules(configDir).filter((line) => !line.startsWith("#") && !patterns.has(line) && !(line.endsWith("/") && patterns.has(line.slice(0, -1))));
 }
-function applySetupIgnoreBase(preview, choice) {
+function applySetupIgnoreBase(preview, choice, configDir) {
   const base = choice === "remote" ? preview.remoteIgnore : preview.localIgnore;
   const lines = base.split(/\r?\n/);
-  const missing = [...missingSetupIgnoreRules(base), ...nestedGitIgnoreRules(preview.nestedRepos).filter((rule) => !lines.includes(rule))];
+  const missing = [...missingSetupIgnoreRules(base, configDir), ...nestedGitIgnoreRules(preview.nestedRepos).filter((rule) => !lines.includes(rule))];
   const eol = base.includes("\r\n") ? "\r\n" : "\n";
   preview.missingIgnoreRules = missing;
   preview.optimizedIgnore = missing.length ? `${base}${base && !base.endsWith("\n") ? eol : ""}${eol}# Simple Link recommended local exclusions${eol}${missing.join(eol)}${eol}` : base;
   const patterns = preview.optimizedIgnore.split(/\r?\n/);
   preview.trackedExcludedLocal = [.../* @__PURE__ */ new Set([
     ...preview.additionalIgnoredLocal,
-    ...preview.trackedLocalFiles.filter((name) => shouldIgnore(name, patterns) || shouldIgnore(name, SETUP_GITIGNORE))
+    ...preview.trackedLocalFiles.filter((name) => shouldIgnore(name, patterns, configDir) || shouldIgnore(name, recommendedIgnoreRules(configDir), configDir))
   ])].sort();
-  preview.trackedExcludedRemote = preview.remoteFiles.filter((name) => shouldIgnore(name, patterns) || shouldIgnore(name, SETUP_GITIGNORE));
+  preview.trackedExcludedRemote = preview.remoteFiles.filter((name) => shouldIgnore(name, patterns, configDir) || shouldIgnore(name, recommendedIgnoreRules(configDir), configDir));
 }
 function setupIgnoreDiffers(preview) {
   return preview.localIgnore.replace(/\r\n/g, "\n").trim() !== preview.remoteIgnore.replace(/\r\n/g, "\n").trim();
@@ -1139,9 +1118,10 @@ function pathBatches(paths) {
   return batches;
 }
 var GitSetup = class {
-  constructor(vaultPath, run) {
+  constructor(vaultPath, run, configDir) {
     this.vaultPath = vaultPath;
     this.run = run;
+    this.configDir = configDir;
     if (!nodeFs || !nodePath) throw new Error("\u9996\u6B21\u4F7F\u7528\u5F15\u5BFC\u4EC5\u652F\u6301\u684C\u9762\u7AEF");
   }
   async checkTools() {
@@ -1218,7 +1198,7 @@ var GitSetup = class {
   async localFiles(root, nestedRepos) {
     if (root) {
       const output = await this.run("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"]);
-      const nested = await nestedRepoFiles(this.vaultPath, nestedRepos, (args) => this.run("git", args));
+      const nested = await nestedRepoFiles(this.vaultPath, nestedRepos, (args) => this.run("git", args), this.configDir);
       const files = [];
       for (const name of /* @__PURE__ */ new Set([...output.split("\0").filter(Boolean), ...nested])) {
         try {
@@ -1233,7 +1213,7 @@ var GitSetup = class {
       existingIgnore = (await nodeFs.readFile(nodePath.join(this.vaultPath, ".gitignore"), "utf8")).split(/\r?\n/);
     } catch {
     }
-    const patterns = [...DEFAULT_SYNC_IGNORE_PATTERNS, ...existingIgnore];
+    const patterns = [...defaultSyncIgnorePatterns(this.configDir), ...existingIgnore];
     const found = [];
     const visit = async (folder) => {
       for (const item of await nodeFs.readdir(folder, { withFileTypes: true })) {
@@ -1242,7 +1222,7 @@ var GitSetup = class {
         if (item.name === ".git") {
           continue;
         }
-        if (shouldIgnore(name, patterns)) continue;
+        if (shouldIgnore(name, patterns, this.configDir)) continue;
         if (item.isDirectory()) await visit(absolute);
         else if (item.isFile()) found.push(name);
       }
@@ -1284,8 +1264,8 @@ var GitSetup = class {
       }
     }
     onProgress?.("2 \xB7 \u626B\u63CF\u672C\u5730\u6587\u4EF6\u4E0E\u5185\u5D4C\u4ED3\u5E93\u2026");
-    const nestedRepos = await findNestedRepos(this.vaultPath);
-    const nestedUserData = new Set((await nestedRepoFiles(this.vaultPath, nestedRepos, (args) => this.run("git", args))).filter((name) => nestedRepos.some((repo2) => name === `${repo2.directory}/data.json`)));
+    const nestedRepos = await findNestedRepos(this.vaultPath, this.configDir);
+    const nestedUserData = new Set((await nestedRepoFiles(this.vaultPath, nestedRepos, (args) => this.run("git", args), this.configDir)).filter((name) => nestedRepos.some((repo2) => name === `${repo2.directory}/data.json`)));
     const localFiles = await this.localFiles(localRoot, nestedRepos);
     const trackedLocal = localRoot ? (await this.run("git", ["ls-files", "--cached", "-z"])).split("\0").filter(Boolean) : [];
     const trackedIgnoredLocal = localRoot ? (await this.run("git", ["ls-files", "--cached", "--ignored", "--exclude-standard", "-z"])).split("\0").filter(Boolean) : [];
@@ -1299,6 +1279,7 @@ var GitSetup = class {
       const hash = nodeCrypto.createHash("sha256");
       const gitHash = nodeCrypto.createHash("sha1").update(`blob ${stat.size}\0`);
       for await (const chunk of nodeFsStream.createReadStream(nodePath.join(this.vaultPath, file))) {
+        if (!Buffer.isBuffer(chunk)) throw new Error("\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u6587\u4EF6\u5B57\u8282\uFF0C\u5DF2\u505C\u6B62\u68C0\u67E5\u3002");
         hash.update(chunk);
         gitHash.update(chunk);
       }
@@ -1347,7 +1328,7 @@ var GitSetup = class {
       throw new Error(`\u672C\u673A\u5F53\u524D\u5206\u652F\u662F ${localBranch}\uFF0C\u8FDC\u7AEF\u9ED8\u8BA4\u5206\u652F\u662F ${repo.branch}\u3002\u8BF7\u5148\u5207\u6362\u5230\u8981\u540C\u6B65\u7684 ${repo.branch} \u5206\u652F\uFF0C\u518D\u91CD\u65B0\u68C0\u67E5\u3002`);
     }
     if (localRoot) {
-      if (trackedLocal.includes(".obsidian/plugins/simple-one-sync/data.json") || trackedLocal.includes(".obsidian/plugins/zoey-sync-test/data.json")) {
+      if (trackedLocal.includes(`${this.configDir}/plugins/simple-one-sync/data.json`) || trackedLocal.includes(`${this.configDir}/plugins/zoey-sync-test/data.json`)) {
         throw new Error("\u672C\u5730 Git \u6B63\u5728\u8DDF\u8E2A\u63D2\u4EF6\u7684\u672C\u673A\u51ED\u636E\u6587\u4EF6 data.json\u3002\u8BF7\u5148\u505C\u6B62\u8DDF\u8E2A\u8BE5\u6587\u4EF6\uFF0C\u518D\u7EE7\u7EED\u63A5\u5165\u3002");
       }
       const staged = await this.run("git", ["ls-files", "--stage", "-z"]);
@@ -1368,7 +1349,7 @@ var GitSetup = class {
         remoteBlobs[item.path] = { sha: item.sha ?? "", size: item.size ?? 0 };
         return item.path;
       }).sort();
-      if (remoteFiles.includes(".obsidian/plugins/simple-one-sync/data.json") || remoteFiles.includes(".obsidian/plugins/zoey-sync-test/data.json")) {
+      if (remoteFiles.includes(`${this.configDir}/plugins/simple-one-sync/data.json`) || remoteFiles.includes(`${this.configDir}/plugins/zoey-sync-test/data.json`)) {
         throw new Error("\u8FDC\u7AEF\u6B63\u5728\u8DDF\u8E2A\u63D2\u4EF6\u7684\u672C\u673A\u51ED\u636E\u6587\u4EF6 data.json\u3002\u8BF7\u5148\u4ECE\u8FDC\u7AEF\u5386\u53F2\u4E2D\u5904\u7406\u5B83\uFF0C\u518D\u7EE7\u7EED\u63A5\u5165\u3002");
       }
     }
@@ -1406,7 +1387,7 @@ var GitSetup = class {
       remoteIgnore = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.from(data.content.replace(/\s/g, ""), "base64"));
     }
     const nestedRules = nestedGitIgnoreRules(nestedRepos);
-    const effectiveIgnore = [...existingIgnore.split(/\r?\n/), ...SETUP_GITIGNORE, ...nestedRules];
+    const effectiveIgnore = [...existingIgnore.split(/\r?\n/), ...recommendedIgnoreRules(this.configDir), ...nestedRules];
     const result = {
       vaultPath: this.vaultPath,
       repoUrl: repo.url,
@@ -1425,17 +1406,17 @@ var GitSetup = class {
       identicalCount,
       remoteOnly,
       localOnly: localFiles.filter((name) => !remoteSet.has(name)),
-      missingIgnoreRules: [...missingSetupIgnoreRules(existingIgnore), ...nestedRules.filter((rule) => !existingIgnore.split(/\r?\n/).includes(rule))],
+      missingIgnoreRules: [...missingSetupIgnoreRules(existingIgnore, this.configDir), ...nestedRules.filter((rule) => !existingIgnore.split(/\r?\n/).includes(rule))],
       nestedRepos,
       localIgnore: existingIgnore,
       remoteIgnore,
       trackedLocalFiles: trackedLocal,
       optimizedIgnore: "",
-      additionalIgnoredLocal: trackedIgnoredLocal.filter((name) => !nestedUserData.has(name) && !shouldIgnore(name, existingIgnore.split(/\r?\n/))),
-      trackedExcludedLocal: [.../* @__PURE__ */ new Set([...trackedIgnoredLocal.filter((name) => !nestedUserData.has(name)), ...trackedLocal.filter((name) => shouldIgnore(name, SETUP_GITIGNORE))])].sort(),
-      trackedExcludedRemote: remoteFiles.filter((name) => shouldIgnore(name, effectiveIgnore))
+      additionalIgnoredLocal: trackedIgnoredLocal.filter((name) => !nestedUserData.has(name) && !shouldIgnore(name, existingIgnore.split(/\r?\n/), this.configDir)),
+      trackedExcludedLocal: [.../* @__PURE__ */ new Set([...trackedIgnoredLocal.filter((name) => !nestedUserData.has(name)), ...trackedLocal.filter((name) => shouldIgnore(name, recommendedIgnoreRules(this.configDir), this.configDir))])].sort(),
+      trackedExcludedRemote: remoteFiles.filter((name) => shouldIgnore(name, effectiveIgnore, this.configDir))
     };
-    applySetupIgnoreBase(result, "local");
+    applySetupIgnoreBase(result, "local", this.configDir);
     onProgress?.(`\u2713 \u68C0\u67E5\u5B8C\u6210\uFF1A\u672C\u5730 ${localFiles.length} \u4E2A\u6587\u4EF6\uFF0C\u4E91\u7AEF ${remoteFiles.length} \u4E2A\u6587\u4EF6\uFF0C\u540C\u540D\u5DEE\u5F02 ${overlaps.length} \u4E2A\u3002`);
     return result;
   }
@@ -1465,7 +1446,7 @@ var GitSetup = class {
   async appendIgnore(repos) {
     const file = nodePath.join(this.vaultPath, ".gitignore");
     const existing = await this.readIgnore();
-    const missing = [...missingSetupIgnoreRules(existing), ...nestedGitIgnoreRules(repos).filter((rule) => !existing.split(/\r?\n/).includes(rule))];
+    const missing = [...missingSetupIgnoreRules(existing, this.configDir), ...nestedGitIgnoreRules(repos).filter((rule) => !existing.split(/\r?\n/).includes(rule))];
     if (!missing.length) return;
     const eol = existing.includes("\r\n") ? "\r\n" : "\n";
     const separator = existing ? `${existing.endsWith("\n") ? "" : eol}${eol}` : "";
@@ -1480,7 +1461,7 @@ var GitSetup = class {
       }
     }
     await this.run("git", ["rm", "-r", "-f", "--cached", "--ignore-unmatch", "--", "."]);
-    await seedNestedRepoFiles(this.vaultPath, repos, (args) => this.run("git", args), skipped);
+    await seedNestedRepoFiles(this.vaultPath, repos, (args) => this.run("git", args), this.configDir, skipped);
     await this.run("git", ["add", "-A"]);
     if (skipped.size) {
       const staged = new Set((await this.run("git", ["diff", "--cached", "--name-only", "-z"])).split("\0").filter(Boolean));
@@ -1488,7 +1469,7 @@ var GitSetup = class {
         await this.run("git", ["reset", "-q", "HEAD", "--", ...batch]);
       }
     }
-    const allowedData = new Set((await nestedRepoFiles(this.vaultPath, repos, (args) => this.run("git", args))).filter((name) => repos.some((repo) => name === `${repo.directory}/data.json`)));
+    const allowedData = new Set((await nestedRepoFiles(this.vaultPath, repos, (args) => this.run("git", args), this.configDir)).filter((name) => repos.some((repo) => name === `${repo.directory}/data.json`)));
     const remaining = (await this.run("git", ["ls-files", "-ci", "--exclude-standard", "-z"])).split("\0").filter((name) => name && !allowedData.has(name));
     if (remaining.length) throw new Error(`\u91CD\u5EFA\u540E\u4ECD\u6709 ${remaining.length} \u4E2A\u88AB\u5FFD\u7565\u7684\u6587\u4EF6\u53D7\u5230\u8FFD\u8E2A\uFF0C\u8BF7\u68C0\u67E5 .gitignore \u540E\u91CD\u8BD5\u3002`);
   }
@@ -1502,7 +1483,7 @@ var GitSetup = class {
       throw new Error(".gitignore \u5728\u9884\u89C8\u540E\u53D1\u751F\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u68C0\u67E5\u4E24\u7AEF\u89C4\u5219\u3002");
     }
     if (ignoreDiffers && !choices[".gitignore"]) throw new Error("\u8BF7\u9009\u62E9\u4EE5\u672C\u673A\u6216\u8FDC\u7AEF .gitignore \u4E3A\u57FA\u51C6\u3002");
-    applySetupIgnoreBase(latest, choices[".gitignore"] || "local");
+    applySetupIgnoreBase(latest, choices[".gitignore"] || "local", this.configDir);
     if (verified.branch !== prior.branch || latest.alreadyLinked !== prior.alreadyLinked || latest.relatedHistory !== prior.relatedHistory || JSON.stringify(latest.remoteFiles) !== JSON.stringify(prior.remoteFiles) || latest.remoteSha !== prior.remoteSha || latest.origin !== prior.origin || latest.localBranch !== prior.localBranch) {
       throw new Error("\u8FDC\u7AEF\u6216\u4ED3\u5E93\u72B6\u6001\u5728\u9884\u89C8\u540E\u53D1\u751F\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u68C0\u67E5\u7B2C 3 \u6B65\u3002");
     }
@@ -1553,14 +1534,14 @@ var GitSetup = class {
     await this.run("git", ["config", "user.email", author.email]);
     if (!latest.origin) await this.run("git", ["remote", "add", "origin", repo.url]);
     await nodeFs.writeFile(nodePath.join(this.vaultPath, ".gitignore"), latest.optimizedIgnore, "utf8");
-    if (latest.localRoot) await rebuildNestedRepoTracking(this.vaultPath, latest.nestedRepos, (args) => this.run("git", args));
+    if (latest.localRoot) await rebuildNestedRepoTracking(this.vaultPath, latest.nestedRepos, (args) => this.run("git", args), this.configDir);
     let hasHead = false;
     try {
       await this.run("git", ["rev-parse", "--verify", "HEAD"]);
       hasHead = true;
     } catch {
     }
-    await seedNestedRepoFiles(this.vaultPath, latest.nestedRepos, (args) => this.run("git", args), skipped);
+    await seedNestedRepoFiles(this.vaultPath, latest.nestedRepos, (args) => this.run("git", args), this.configDir, skipped);
     if (hasHead) await this.run("git", ["add", "-A"]);
     else {
       const included2 = [.../* @__PURE__ */ new Set([...latest.localFiles, ".gitignore"])].filter((file) => !skipped.has(file));
@@ -1579,7 +1560,10 @@ var GitSetup = class {
         try {
           const stat = await nodeFs.stat(nodePath.join(this.vaultPath, file));
           const hash = nodeCrypto.createHash("sha256");
-          for await (const chunk of nodeFsStream.createReadStream(nodePath.join(this.vaultPath, file))) hash.update(chunk);
+          for await (const chunk of nodeFsStream.createReadStream(nodePath.join(this.vaultPath, file))) {
+            if (!Buffer.isBuffer(chunk)) throw new Error("\u65E0\u6CD5\u8BFB\u53D6\u672C\u5730\u6587\u4EF6\u5B57\u8282\uFF0C\u5DF2\u505C\u6B62\u68C0\u67E5\u3002");
+            hash.update(chunk);
+          }
           if (`${stat.size}:${hash.digest("hex")}` !== latest.localSignatures[file] && file !== ".gitignore") changedDuringStage.push(file);
         } catch {
           if (latest.localSignatures[file]) changedDuringStage.push(file);
@@ -1690,14 +1674,14 @@ function newLocalState(binding = "") {
   return { schema: 1, binding, baseCommitSha: null, base: {}, cache: {}, dirty: {}, paths: newPathRecords(), revision: 0, lastCacheAt: 0 };
 }
 function safePath(path2) {
-  if (!path2 || path2.startsWith("/") || path2.includes("\\") || /[\x00-\x1f]/.test(path2) || path2.split("/").some((part) => !part || part === "." || part === "..")) {
+  if (!path2 || path2.startsWith("/") || path2.includes("\\") || [...path2].some((character) => character.charCodeAt(0) < 32) || path2.split("/").some((part) => !part || part === "." || part === "..")) {
     throw new Error("\u4ED3\u5E93\u4E2D\u5B58\u5728\u65E0\u6CD5\u5B89\u5168\u5199\u5165\u7684\u8DEF\u5F84\uFF0C\u5DF2\u505C\u6B62\u540C\u6B65\u3002");
   }
   return path2;
 }
 var IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "tif", "tiff", "avif", "heic", "heif", "apng"];
 function mobileIgnores(options, configDir, pluginId) {
-  const generated = [...DEFAULT_SYNC_IGNORE_PATTERNS, ...options.ignorePatterns];
+  const generated = [...defaultSyncIgnorePatterns(configDir), ...options.ignorePatterns];
   if (!options.syncImages) generated.push(...IMAGE_EXTENSIONS.map((ext) => `*.${ext}`));
   if (!options.syncPlugins) generated.push(`${configDir}/plugins/`);
   generated.push(
@@ -1727,7 +1711,7 @@ function included(path2, options, configDir, pluginId) {
     if (/\/(?:data|sync-settings)\.json$/i.test(path2)) return false;
   } else if (path2 === configDir || path2.startsWith(`${configDir}/`)) return false;
   if (!options.syncImages && IMAGE_EXTENSIONS.includes(path2.split(".").pop().toLowerCase())) return false;
-  return !shouldIgnore(path2, [...DEFAULT_SYNC_IGNORE_PATTERNS, ...options.ignorePatterns]);
+  return !shouldIgnore(path2, [...defaultSyncIgnorePatterns(configDir), ...options.ignorePatterns], configDir);
 }
 async function blobSha(bytes) {
   const header = new TextEncoder().encode(`blob ${bytes.byteLength}\0`);
@@ -1788,7 +1772,6 @@ async function scanCurrent(adapter, state, options, allowed, force, progress) {
     const before = await adapter.stat(path2);
     if (!before || before.type !== "file") throw new Error("\u626B\u63CF\u671F\u95F4\u6587\u4EF6\u53D1\u751F\u53D8\u5316\uFF0C\u8BF7\u91CD\u8BD5\u3002");
     const cached = state.cache[path2];
-    const now = Date.now();
     const recentlyWritten = !!cached && Math.max(before.mtime, cached.mtime) >= cached.verifiedAt - 2e3;
     if (!force && options.cacheEnabled && cached?.hashVersion === SYNC_HASH_VERSION && !state.dirty[path2] && !recentlyWritten && before.mtime === cached.mtime && before.ctime === cached.ctime && before.size === cached.size) {
       cached.mode = state.base[path2]?.mode ?? cached.mode;
@@ -2002,6 +1985,9 @@ var MobileGithub = class {
     if (!this.getOptions().token.trim()) throw new Error("\u8BF7\u586B\u5199\u624B\u673A\u7AEF GitHub Token\u3002");
     return { ...repo, prefix: `/repos/${repo.owner}/${repo.name}` };
   }
+  async json(path2, read, method = "GET", body) {
+    return read(await this.api(path2, method, body));
+  }
   async api(path2, method = "GET", body, raw = false) {
     const token = this.getOptions().token.trim();
     if (!token) throw new Error("\u8BF7\u5148\u586B\u5199 GitHub Token\u3002");
@@ -2041,7 +2027,7 @@ var MobileGithub = class {
       }
       if (!raw) return response.json;
       const type = response.headers["content-type"] ?? response.headers["Content-Type"] ?? "";
-      if (type.includes("json")) return decodeBase64(response.json.content);
+      if (type.includes("json")) return decodeBase64(apiString(apiObject(response.json).content, true));
       return new Uint8Array(response.arrayBuffer);
     } finally {
       if (timer !== void 0) window.clearTimeout(timer);
@@ -2060,15 +2046,15 @@ var MobileGithub = class {
   }
   async remote(useCompare = false) {
     const repo = this.repo();
-    const branch = this.getOptions().branch.trim() || (await this.api(repo.prefix)).default_branch;
+    const branch = this.getOptions().branch.trim() || (await this.json(repo.prefix, readRepo)).default_branch;
     if (!branch) throw new Error("\u4ED3\u5E93\u5C1A\u65E0\u5206\u652F\uFF0C\u8BF7\u5148\u5728\u7535\u8111\u7AEF\u521B\u5EFA\u9996\u6B21\u63D0\u4EA4\u3002");
-    const head = await this.api(`${repo.prefix}/commits/${encodeURIComponent(branch)}`);
+    const head = await this.json(`${repo.prefix}/commits/${encodeURIComponent(branch)}`, readCommit);
     const rootTree = head.commit.tree.sha;
     const renames = {};
     let comparison;
     if (useCompare && this.state.baseCommitSha) {
       if (head.sha !== this.state.baseCommitSha) {
-        comparison = await this.api(`${repo.prefix}/compare/${this.state.baseCommitSha}...${head.sha}`);
+        comparison = await this.json(`${repo.prefix}/compare/${this.state.baseCommitSha}...${head.sha}`, readCompare);
         if (!["ahead", "identical"].includes(comparison.status)) throw new Error("\u8FDC\u7AEF\u5386\u53F2\u4E0E\u5171\u540C\u57FA\u51C6\u4E0D\u4E00\u81F4\uFF0C\u5DF2\u505C\u6B62\u540C\u6B65\uFF0C\u8BF7\u91CD\u65B0\u6838\u5BF9\u4ED3\u5E93\u3002");
         for (const change of comparison.files ?? []) {
           if (change.status === "renamed" && this.allowed(change.previous_filename) && this.allowed(change.filename)) {
@@ -2097,12 +2083,12 @@ var MobileGithub = class {
         files[path2] = { sha: entry.sha, mode: entry.mode };
       } else if (entry.type === "commit") throw new Error(`\u4E0D\u652F\u6301\u540C\u6B65 Git \u5B50\u6A21\u5757\uFF1A${path2}`);
     };
-    const tree = await this.api(`${repo.prefix}/git/trees/${rootTree}?recursive=1`);
+    const tree = await this.json(`${repo.prefix}/git/trees/${rootTree}?recursive=1`, readTree);
     if (!tree.truncated) {
       for (const entry of tree.tree) collect(entry);
     } else {
       const walk = async (sha, prefix = "") => {
-        const subtree = await this.api(`${repo.prefix}/git/trees/${sha}`);
+        const subtree = await this.json(`${repo.prefix}/git/trees/${sha}`, readTree);
         if (subtree.truncated) throw new Error("\u8FDC\u7AEF\u76EE\u5F55\u6E05\u5355\u4ECD\u88AB\u622A\u65AD\uFF0C\u5DF2\u505C\u6B62\u540C\u6B65\uFF0C\u672A\u63A8\u65AD\u5220\u9664\u3002");
         for (const entry of subtree.tree) {
           if (entry.type === "tree") {
@@ -2124,25 +2110,25 @@ var MobileGithub = class {
   }
   async verify() {
     await this.load();
-    const metadata = await this.api(this.repo().prefix);
+    const metadata = await this.json(this.repo().prefix, readRepo);
     if (metadata.permissions?.push === false) throw new Error("\u5F53\u524D Token \u6CA1\u6709\u4ED3\u5E93\u5199\u5165\u6743\u9650\uFF0C\u8BF7\u6388\u4E88 Contents \u8BFB\u5199\u6743\u9650\u3002");
     return await this.remote();
   }
   async verifyToken() {
-    const user = await this.api("/user");
+    const user = await this.json("/user", (value) => ({ login: apiString(apiObject(value).login) }));
     if (!user.login) throw new Error("\u672A\u80FD\u786E\u8BA4 Token \u5BF9\u5E94\u7684 GitHub \u8D26\u53F7\u3002");
     return user.login;
   }
   async verifyAccess() {
     await this.verifyToken();
     const { prefix } = this.repo();
-    const metadata = await this.api(prefix);
+    const metadata = await this.json(prefix, readRepo);
     if (!metadata.private) throw new Error("\u8BF7\u9009\u62E9 GitHub \u79C1\u4EBA\u4ED3\u5E93\uFF0C\u907F\u514D\u516C\u5F00\u7B14\u8BB0\u3002");
     if (metadata.archived || metadata.disabled) throw new Error("\u4ED3\u5E93\u5DF2\u5F52\u6863\u6216\u505C\u7528\uFF0C\u65E0\u6CD5\u540C\u6B65\u3002");
     if (metadata.permissions?.push === false) throw new Error("\u5F53\u524D\u8D26\u53F7\u6CA1\u6709\u4ED3\u5E93\u5199\u5165\u6743\u9650\u3002");
     const branch = this.getOptions().branch.trim() || metadata.default_branch;
     if (!branch) throw new Error("\u4ED3\u5E93\u5C1A\u65E0\u5206\u652F\uFF0C\u8BF7\u5148\u5728 GitHub \u521B\u5EFA README \u6216\u9996\u6B21\u63D0\u4EA4\u3002");
-    const branchInfo = await this.api(`${prefix}/branches/${encodeURIComponent(branch)}`);
+    const branchInfo = await this.json(`${prefix}/branches/${encodeURIComponent(branch)}`, (value) => ({ protected: apiBoolean(apiObject(value).protected) }));
     if (branchInfo.protected) throw new Error("\u8BE5\u5206\u652F\u53D7\u4FDD\u62A4\uFF0C\u8BF7\u9009\u62E9\u5141\u8BB8\u76F4\u63A5\u5199\u5165\u7684\u540C\u6B65\u5206\u652F\u3002");
     const remote = await this.remote();
     await this.api(`${prefix}/git/blobs`, "POST", { content: "", encoding: "utf-8" });
@@ -2151,7 +2137,7 @@ var MobileGithub = class {
   async createPrivateRepository(name) {
     if (!/^[A-Za-z0-9._-]+$/.test(name) || name === "." || name === "..") throw new Error("\u4ED3\u5E93\u540D\u79F0\u53EA\u80FD\u5305\u542B\u82F1\u6587\u3001\u6570\u5B57\u3001\u70B9\u3001\u4E0B\u5212\u7EBF\u6216\u77ED\u6A2A\u7EBF\u3002");
     await this.verifyToken();
-    const repo = await this.api("/user/repos", "POST", { name, private: true, auto_init: true });
+    const repo = await this.json("/user/repos", readRepo, "POST", { name, private: true, auto_init: true });
     if (!repo.private || !repo.clone_url) throw new Error("\u672A\u80FD\u786E\u8BA4\u65B0\u4ED3\u5E93\u7684\u79C1\u4EBA\u72B6\u6001\uFF0C\u8BF7\u5230 GitHub \u68C0\u67E5\u521B\u5EFA\u7ED3\u679C\u3002");
     return { url: parseGithubRepoUrl(repo.clone_url).url, branch: repo.default_branch || "" };
   }
@@ -2395,6 +2381,7 @@ var MobileGithub = class {
   }
   async getBlob(sha) {
     const bytes = await this.api(`${this.repo().prefix}/git/blobs/${sha}`, "GET", void 0, true);
+    if (!(bytes instanceof Uint8Array)) throw new Error("GitHub \u6587\u4EF6\u54CD\u5E94\u683C\u5F0F\u9519\u8BEF\uFF0C\u5DF2\u505C\u6B62\u540C\u6B65\u3002");
     if (await blobSha(bytes) !== sha) throw new Error("\u4E91\u7AEF\u6587\u4EF6\u6821\u9A8C\u5931\u8D25\uFF0C\u5DF2\u505C\u6B62\u5199\u5165\u3002");
     return bytes;
   }
@@ -2416,7 +2403,7 @@ var MobileGithub = class {
       if (plan.scope !== this.scope()) throw new Error("\u540C\u6B65\u8303\u56F4\u6216\u4ED3\u5E93\u8BBE\u7F6E\u5DF2\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u9884\u89C8\u3002");
       if (this.state.revision !== plan.revision) throw new Error("\u9884\u89C8\u540E\u672C\u5730\u53D1\u751F\u53D8\u5316\uFF0C\u8BF7\u91CD\u65B0\u9884\u89C8\u3002");
       const repo = this.repo();
-      const head = await this.api(`${repo.prefix}/git/ref/heads/${encodeURIComponent(plan.remote.branch)}`);
+      const head = await this.json(`${repo.prefix}/git/ref/heads/${encodeURIComponent(plan.remote.branch)}`, (value) => ({ object: readSha(apiObject(value).object) }));
       if (head.object.sha !== plan.remote.commit) throw new Error("\u9884\u89C8\u540E\u4E91\u7AEF\u51FA\u73B0\u65B0\u63D0\u4EA4\uFF0C\u8BF7\u91CD\u65B0\u9884\u89C8\u3002");
       const live = await scanCurrent(this.adapter, this.state, this.getOptions(), this.allowed, false, this.progress);
       await this.save();
@@ -2429,7 +2416,7 @@ var MobileGithub = class {
       let treeSha = plan.remote.tree;
       const flush = async () => {
         if (!batch.length) return;
-        const tree = await this.api(`${repo.prefix}/git/trees`, "POST", { base_tree: treeSha, tree: batch });
+        const tree = await this.json(`${repo.prefix}/git/trees`, readSha, "POST", { base_tree: treeSha, tree: batch });
         treeSha = tree.sha;
         batch = [];
         batchBytes = 0;
@@ -2461,7 +2448,7 @@ var MobileGithub = class {
             if (batchBytes + size > 1024e3) await flush();
             batchBytes += size;
           } else {
-            const blob = await this.api(`${repo.prefix}/git/blobs`, "POST", { content: encodeBase64(bytes), encoding: "base64" });
+            const blob = await this.json(`${repo.prefix}/git/blobs`, readSha, "POST", { content: encodeBase64(bytes), encoding: "base64" });
             if (blob.sha !== target.sha) throw new Error("\u4E0A\u4F20\u5185\u5BB9\u6821\u9A8C\u5931\u8D25\u3002");
             item.sha = blob.sha;
             known.add(blob.sha);
@@ -2479,7 +2466,7 @@ var MobileGithub = class {
       ];
       let commitSha = plan.remote.commit;
       if (treeSha !== plan.remote.tree) {
-        const commit = await this.api(`${repo.prefix}/git/commits`, "POST", {
+        const commit = await this.json(`${repo.prefix}/git/commits`, readSha, "POST", {
           message: `Simple Link mobile sync ${(/* @__PURE__ */ new Date()).toISOString()}`,
           tree: treeSha,
           parents: [plan.remote.commit]
@@ -2518,7 +2505,7 @@ var MobileGithub = class {
         await this.save();
         return;
       }
-      const diff = await this.api(`${this.repo().prefix}/compare/${pending.commit}...${remote.commit}`);
+      const diff = await this.json(`${this.repo().prefix}/compare/${pending.commit}...${remote.commit}`, readCompare);
       if (!["ahead", "identical"].includes(diff.status)) throw new Error("\u672A\u5B8C\u6210\u63D0\u4EA4\u4E0E\u8FDC\u7AEF\u5386\u53F2\u4E0D\u4E00\u81F4\uFF0C\u8BF7\u4FDD\u7559\u672C\u673A\u72B6\u6001\u5E76\u68C0\u67E5\u4ED3\u5E93\u3002");
     }
     for (const action of pending.actions) {
@@ -2596,6 +2583,60 @@ function encodeBase64(bytes) {
 function decodeBase64(value) {
   const text = atob(value.replace(/\s/g, ""));
   return Uint8Array.from(text, (character) => character.charCodeAt(0));
+}
+function apiObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("GitHub \u54CD\u5E94\u683C\u5F0F\u9519\u8BEF\uFF0C\u5DF2\u505C\u6B62\u540C\u6B65\u3002");
+  return value;
+}
+function apiString(value, allowEmpty = false) {
+  if (typeof value !== "string" || !allowEmpty && !value) throw new Error("GitHub \u54CD\u5E94\u7F3A\u5C11\u5FC5\u8981\u5B57\u6BB5\uFF0C\u5DF2\u505C\u6B62\u540C\u6B65\u3002");
+  return value;
+}
+function apiBoolean(value) {
+  if (typeof value !== "boolean") throw new Error("GitHub \u54CD\u5E94\u5E03\u5C14\u5B57\u6BB5\u65E0\u6548\uFF0C\u5DF2\u505C\u6B62\u540C\u6B65\u3002");
+  return value;
+}
+function apiArray(value, read) {
+  if (!Array.isArray(value)) throw new Error("GitHub \u6587\u4EF6\u6E05\u5355\u65E0\u6548\uFF0C\u5DF2\u505C\u6B62\u540C\u6B65\uFF1B\u4E0D\u4F1A\u63A8\u65AD\u5220\u9664\u3002");
+  return value.map(read);
+}
+function readSha(value) {
+  return { sha: apiString(apiObject(value).sha) };
+}
+function readRepo(value) {
+  const repo = apiObject(value);
+  return {
+    default_branch: repo.default_branch === void 0 || repo.default_branch === "" ? "" : apiString(repo.default_branch),
+    private: repo.private === void 0 ? false : apiBoolean(repo.private),
+    archived: repo.archived === void 0 ? false : apiBoolean(repo.archived),
+    disabled: repo.disabled === void 0 ? false : apiBoolean(repo.disabled),
+    clone_url: repo.clone_url === void 0 ? "" : apiString(repo.clone_url),
+    permissions: repo.permissions === void 0 ? void 0 : { push: apiBoolean(apiObject(repo.permissions).push) }
+  };
+}
+function readCommit(value) {
+  const commit = apiObject(value);
+  return { sha: apiString(commit.sha), commit: { tree: readSha(apiObject(commit.commit).tree) } };
+}
+function readTree(value) {
+  const tree = apiObject(value);
+  return { truncated: apiBoolean(tree.truncated), tree: apiArray(tree.tree, (value2) => {
+    const entry = apiObject(value2);
+    const type = apiString(entry.type);
+    if (!["blob", "tree", "commit"].includes(type)) throw new Error("GitHub \u76EE\u5F55\u6761\u76EE\u7C7B\u578B\u672A\u77E5\uFF0C\u5DF2\u505C\u6B62\u540C\u6B65\uFF1B\u4E0D\u4F1A\u63A8\u65AD\u5220\u9664\u3002");
+    return { path: safePath(apiString(entry.path)), sha: apiString(entry.sha), mode: apiString(entry.mode), type };
+  }) };
+}
+function readCompare(value) {
+  const compare = apiObject(value);
+  return { status: apiString(compare.status), files: compare.files === void 0 ? [] : apiArray(compare.files, (value2) => {
+    const file = apiObject(value2);
+    return {
+      status: apiString(file.status),
+      filename: apiString(file.filename),
+      previous_filename: file.status === "renamed" ? apiString(file.previous_filename) : ""
+    };
+  }) };
 }
 
 // src/mobileUi.ts
@@ -2796,7 +2837,7 @@ function renderMobileSettings(root, host, guide = false, rerender) {
   if (guide) {
     const steps = root.createEl("ol");
     steps.createEl("li", { text: "\u5728\u624B\u673A\u5B89\u88C5\u5E76\u542F\u7528 Simple Link\uFF0C\u9009\u62E9 GitHub API \u6A21\u5F0F\u3002" });
-    steps.createEl("li", { text: "\u586B\u5199\u4ED3\u5E93 HTTPS \u5730\u5740\u53CA Token\u3002Token \u9700\u6388\u4E88\u76EE\u6807\u4ED3\u5E93 Contents \u8BFB\u5199\u6743\u9650\u3002" });
+    steps.createEl("li", { text: "\u586B\u5199\u4ED3\u5E93 HTTPS \u5730\u5740\u53CA token\u3002token \u9700\u6388\u4E88\u76EE\u6807\u4ED3\u5E93 contents \u8BFB\u5199\u6743\u9650\u3002" });
     steps.createEl("li", { text: "\u6838\u9A8C\u4ED3\u5E93\uFF0C\u7136\u540E\u786E\u8BA4\u56FE\u7247\u3001\u63D2\u4EF6\u3001\u7F13\u5B58\u548C\u8DEF\u5F84\u8FFD\u8E2A\u9009\u9879\u3002" });
     steps.createEl("li", { text: "\u7ED1\u5B9A\u540E\u624B\u52A8\u540C\u6B65\uFF0C\u68C0\u67E5\u9996\u6B21\u9884\u89C8\u548C\u540C\u540D\u51B2\u7A81\u3002\u9996\u6B21\u7F3A\u5931\u6587\u4EF6\u4E0D\u4F1A\u88AB\u5F53\u6210\u5220\u9664\u3002" });
   }
@@ -2824,7 +2865,7 @@ function renderMobileSettings(root, host, guide = false, rerender) {
     }
   });
   quotaObserver.observe(root.ownerDocument.body, { childList: true, subtree: true });
-  new import_obsidian4.Setting(account).setName("GitHub Token").setDesc("\u53EA\u4FDD\u5B58\u5728\u672C\u673A\u63D2\u4EF6\u6570\u636E\u4E2D\uFF0C\u4E0D\u5199\u5165\u5171\u4EAB\u914D\u7F6E\u3002").addText((text) => {
+  new import_obsidian4.Setting(account).setName("GitHub token").setDesc("\u53EA\u4FDD\u5B58\u5728\u672C\u673A\u63D2\u4EF6\u6570\u636E\u4E2D\uFF0C\u4E0D\u5199\u5165\u5171\u4EAB\u914D\u7F6E\u3002").addText((text) => {
     text.inputEl.type = "password";
     text.setValue(options.token).onChange(async (value) => {
       options.token = value.trim();
@@ -2851,7 +2892,7 @@ function renderMobileSettings(root, host, guide = false, rerender) {
     status.setText(message);
     status.toggleClass("zoey-sync-setup-error", error);
   };
-  new import_obsidian4.Setting(account).setName("\u6838\u9A8C\u4ED3\u5E93\u4E0E Token").setDesc("\u53EA\u8BFB\u53D6\u6307\u5B9A\u4ED3\u5E93\u4FE1\u606F\u548C\u6587\u4EF6\u6811\uFF0C\u4E0D\u5217\u51FA\u8D26\u53F7\u5168\u90E8\u4ED3\u5E93\uFF0C\u4E0D\u4E0B\u8F7D\u6B63\u6587\u3002").addButton((button) => button.setButtonText("\u68C0\u67E5").setDisabled(!host.active()).onClick(async () => {
+  new import_obsidian4.Setting(account).setName("\u6838\u9A8C\u4ED3\u5E93\u4E0E token").setDesc("\u53EA\u8BFB\u53D6\u6307\u5B9A\u4ED3\u5E93\u4FE1\u606F\u548C\u6587\u4EF6\u6811\uFF0C\u4E0D\u5217\u51FA\u8D26\u53F7\u5168\u90E8\u4ED3\u5E93\uFF0C\u4E0D\u4E0B\u8F7D\u6B63\u6587\u3002").addButton((button) => button.setButtonText("\u68C0\u67E5").setDisabled(!host.active()).onClick(async () => {
     button.setDisabled(true);
     report("\u6B63\u5728\u68C0\u67E5 Token \u4E0E\u4ED3\u5E93\u2026");
     try {
@@ -2878,7 +2919,7 @@ function renderMobileSettings(root, host, guide = false, rerender) {
     options.ignorePatterns = value.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     await persist();
   }));
-  if (guide) root.createEl("h3", { text: "3 \xB7 Link Diff \u7F13\u5B58\u4E0E\u8DEF\u5F84" });
+  if (guide) root.createEl("h3", { text: "3 \xB7 link diff \u7F13\u5B58\u4E0E\u8DEF\u5F84" });
 }
 
 // src/main.ts
@@ -2921,7 +2962,7 @@ var DEFAULT_SETTINGS = {
   dirty: [],
   inFlight: [],
   pendingRequestId: "",
-  ignorePatterns: [...DEFAULT_SYNC_IGNORE_PATTERNS],
+  ignorePatterns: [],
   mobileAutoSyncMinutes: 10,
   commandPollSeconds: 60,
   gitRemoteUrl: "",
@@ -3071,7 +3112,7 @@ var ZoeySyncPlugin = class extends import_obsidian5.Plugin {
       if (!import_obsidian5.Platform.isMobile) {
         this.app.workspace.onLayoutReady(() => void this.openSyncView());
       }
-    } else if (this.statusEl) this.statusEl.style.display = "none";
+    } else if (this.statusEl) this.statusEl.addClass("simple-link-hidden");
   }
   onunload() {
     this.deactivateFeature();
@@ -3271,7 +3312,7 @@ var ZoeySyncPlugin = class extends import_obsidian5.Plugin {
   activateFeature() {
     if (this.featureActive) return;
     this.featureActive = true;
-    if (this.statusEl) this.statusEl.style.display = "";
+    if (this.statusEl) this.statusEl.removeClass("simple-link-hidden");
     this.ribbonEl = this.addRibbonIcon("refresh-cw", "\u6253\u5F00 Simple Link", () => void this.openSyncView());
     this.registerViewRefreshEvents();
     if (this.useLightweightSync()) {
@@ -3297,7 +3338,7 @@ var ZoeySyncPlugin = class extends import_obsidian5.Plugin {
     this.clearDesktopTimeouts();
     this.ribbonEl?.remove();
     this.ribbonEl = void 0;
-    if (this.statusEl) this.statusEl.style.display = "none";
+    if (this.statusEl) this.statusEl.addClass("simple-link-hidden");
     this.app.workspace.detachLeavesOfType(ZoeySyncView.type);
     this.app.workspace.detachLeavesOfType(ZoeySyncConflictView.type);
   }
@@ -3425,7 +3466,8 @@ var ZoeySyncPlugin = class extends import_obsidian5.Plugin {
       this.settings.mobile.mode = "github";
     }
     this.settings.inFlight = Array.isArray(this.settings.inFlight) ? this.settings.inFlight : [];
-    this.settings.ignorePatterns = Array.isArray(this.settings.ignorePatterns) ? this.settings.ignorePatterns.filter((pattern) => typeof pattern === "string") : [...DEFAULT_SYNC_IGNORE_PATTERNS];
+    this.settings.ignorePatterns = Array.isArray(this.settings.ignorePatterns) ? this.settings.ignorePatterns.filter((pattern) => typeof pattern === "string") : defaultSyncIgnorePatterns(this.app.vault.configDir);
+    this.settings.ignorePatterns = [.../* @__PURE__ */ new Set([...defaultSyncIgnorePatterns(this.app.vault.configDir), ...this.settings.ignorePatterns])];
     this.settings.errorLogs = Array.isArray(this.settings.errorLogs) ? this.settings.errorLogs : [];
     this.pruneErrorLogs();
     if (!this.settings.lastPullAt) {
@@ -3537,7 +3579,7 @@ var ZoeySyncPlugin = class extends import_obsidian5.Plugin {
     );
   }
   handleVaultChange(paths) {
-    const relevantPaths = paths.filter((path2) => !shouldIgnore(path2, this.settings.ignorePatterns));
+    const relevantPaths = paths.filter((path2) => !shouldIgnore(path2, this.settings.ignorePatterns, this.app.vault.configDir));
     if (relevantPaths.length === 0) return;
     const now = Date.now();
     this.lastFileChangeAt = now;
@@ -3714,7 +3756,7 @@ var ZoeySyncPlugin = class extends import_obsidian5.Plugin {
   }
   async inspectLocalHistory(retentionDays = 30) {
     if (!this.settings.setupComplete) throw new Error("\u8BF7\u5148\u5B8C\u6210\u7535\u8111\u7AEF Git \u63A5\u5165");
-    const nodeRequire3 = globalThis.require;
+    const nodeRequire3 = window.require;
     if (!nodeRequire3) throw new Error("\u672C\u5730\u5386\u53F2\u7626\u8EAB\u4EC5\u652F\u6301\u7535\u8111\u7AEF");
     const path2 = nodeRequire3("path");
     const root = await this.git(["rev-parse", "--show-toplevel"]);
@@ -4082,7 +4124,7 @@ var ZoeySyncPlugin = class extends import_obsidian5.Plugin {
   }
   async recordDirty(entry) {
     if (this.settings.mobile.mode === "github") return;
-    if (shouldIgnore(entry.path, this.settings.ignorePatterns) || entry.fromPath && shouldIgnore(entry.fromPath, this.settings.ignorePatterns)) return;
+    if (shouldIgnore(entry.path, this.settings.ignorePatterns, this.app.vault.configDir) || entry.fromPath && shouldIgnore(entry.fromPath, this.settings.ignorePatterns, this.app.vault.configDir)) return;
     if (this.suppressPaths.has(entry.path) || entry.fromPath && this.suppressPaths.has(entry.fromPath)) return;
     this.settings.dirty = coalesceDirty(this.settings.dirty, entry);
     await this.saveSettings();
@@ -4224,7 +4266,7 @@ var ZoeySyncPlugin = class extends import_obsidian5.Plugin {
       return;
     }
     if (!this.nativeGitEnabled()) {
-      if (showNotice) new import_obsidian5.Notice("\u5F53\u524D\u6A21\u5F0F\u4E0D\u4F7F\u7528\u539F\u751F Git Commit\uFF1B\u8BF7\u4F7F\u7528\u9884\u89C8\u5E76\u540C\u6B65");
+      if (showNotice) new import_obsidian5.Notice("\u5F53\u524D\u6A21\u5F0F\u4E0D\u4F7F\u7528\u539F\u751F Git commit\uFF1B\u8BF7\u4F7F\u7528\u9884\u89C8\u5E76\u540C\u6B65");
       return;
     }
     if (this.syncing) {
@@ -4391,7 +4433,7 @@ ${command.body}` : ""}`, 8e3);
   setSetupChoice(path2, choice) {
     this.setupChoices[path2] = choice;
     if (path2 === ".gitignore" && this.setupPreview) {
-      applySetupIgnoreBase(this.setupPreview, choice);
+      applySetupIgnoreBase(this.setupPreview, choice, this.app.vault.configDir);
       this.setupTrackingChoice = void 0;
     }
   }
@@ -4409,11 +4451,11 @@ ${command.body}` : ""}`, 8e3);
     return this.setup().readOverlap(this.settings.setupVerified, this.setupPreview, path2);
   }
   setup() {
-    return new GitSetup(this.vaultBasePath(), (program, args, timeoutMs, onOutput, stdinText, signal) => this.exec(program, args, program === "git" && (args[0] === "fetch" || args[0] === "push"), true, timeoutMs, onOutput, stdinText, signal));
+    return new GitSetup(this.vaultBasePath(), (program, args, timeoutMs, onOutput, stdinText, signal) => this.exec(program, args, program === "git" && (args[0] === "fetch" || args[0] === "push"), true, timeoutMs, onOutput, stdinText, signal), this.app.vault.configDir);
   }
   async inspectFileTracking() {
     if (import_obsidian5.Platform.isMobile || !this.settings.setupComplete) throw new Error("\u8BF7\u5148\u5B8C\u6210\u7535\u8111\u7AEF Git \u63A5\u5165");
-    const nodeRequire3 = globalThis.require;
+    const nodeRequire3 = window.require;
     if (!nodeRequire3) throw new Error("\u6587\u4EF6\u8FFD\u8E2A\u68C0\u67E5\u4EC5\u652F\u6301\u7535\u8111\u7AEF");
     const fs2 = nodeRequire3("fs").promises;
     const path2 = nodeRequire3("path");
@@ -4431,13 +4473,13 @@ ${command.body}` : ""}`, 8e3);
     }
     const tracked = (await this.gitRaw(["ls-files", "--cached", "-z"])).split("\0").filter(Boolean);
     const ignored = (await this.gitRaw(["ls-files", "-ci", "--exclude-standard", "-z"])).split("\0").filter(Boolean);
-    const nestedRepos = await findNestedRepos(vaultPath);
-    const nestedData = new Set((await nestedRepoFiles(vaultPath, nestedRepos, (args) => this.gitRaw(args))).filter((name) => nestedRepos.some((repo) => name === `${repo.directory}/data.json`)));
+    const nestedRepos = await findNestedRepos(vaultPath, this.app.vault.configDir);
+    const nestedData = new Set((await nestedRepoFiles(vaultPath, nestedRepos, (args) => this.gitRaw(args), this.app.vault.configDir)).filter((name) => nestedRepos.some((repo) => name === `${repo.directory}/data.json`)));
     const paths = [.../* @__PURE__ */ new Set([
       ...ignored.filter((file) => !nestedData.has(file)),
-      ...tracked.filter((file) => shouldIgnore(file, SETUP_GITIGNORE))
+      ...tracked.filter((file) => shouldIgnore(file, recommendedIgnoreRules(this.app.vault.configDir), this.app.vault.configDir))
     ])].filter((file) => file !== ".gitignore").sort();
-    return { paths, missingRules: missingSetupIgnoreRules(existingIgnore) };
+    return { paths, missingRules: missingSetupIgnoreRules(existingIgnore, this.app.vault.configDir) };
   }
   async repairFileTracking(preview) {
     let repaired = 0;
@@ -4660,7 +4702,7 @@ ${command.body}` : ""}`, 8e3);
     }
   }
   async exec(program, args, authenticated = false, trim = true, timeoutMs = 12e4, onOutput, stdinText, signal) {
-    const nodeRequire3 = globalThis.require;
+    const nodeRequire3 = window.require;
     if (!nodeRequire3) throw new Error("\u5F53\u524D\u5E73\u53F0\u4E0D\u652F\u6301\u684C\u9762\u547D\u4EE4");
     const childProcess = nodeRequire3("child_process");
     const env = { ...process.env };
@@ -4769,9 +4811,9 @@ ${command.body}` : ""}`, 8e3);
   }
   async prepareNestedRepositories() {
     const vaultPath = this.vaultBasePath();
-    const repos = await findNestedRepos(vaultPath);
+    const repos = await findNestedRepos(vaultPath, this.app.vault.configDir);
     if (!repos.length) return;
-    const nodeRequire3 = globalThis.require;
+    const nodeRequire3 = window.require;
     if (!nodeRequire3) throw new Error("\u5185\u5D4C\u4ED3\u5E93\u540C\u6B65\u4EC5\u652F\u6301\u684C\u9762\u7AEF");
     const fs2 = nodeRequire3("fs").promises;
     const path2 = nodeRequire3("path");
@@ -4788,7 +4830,7 @@ ${command.body}` : ""}`, 8e3);
       const separator = existing ? `${existing.endsWith("\n") ? "" : eol}${eol}` : "";
       await fs2.writeFile(ignorePath, `${existing}${separator}# Embedded Git metadata stays local${eol}${missing.join(eol)}${eol}`, "utf8");
     }
-    await rebuildNestedRepoTracking(vaultPath, repos, (args) => this.gitRaw(args));
+    await rebuildNestedRepoTracking(vaultPath, repos, (args) => this.gitRaw(args), this.app.vault.configDir);
   }
   async desktopFetchAndMerge(pushAfterResolve = false) {
     this.setSyncActivity("\u6B63\u5728\u68C0\u67E5\u4E91\u7AEF\u66F4\u65B0\u2026", "checking");
@@ -4985,7 +5027,7 @@ var FileTrackingModal = class extends import_obsidian5.Modal {
     body.empty();
     body.createEl("h2", { text: "\u68C0\u67E5\u5E76\u4FEE\u590D\u6587\u4EF6\u8FFD\u8E2A", cls: "zoey-sync-tracking-title" });
     body.createEl("p", { text: `\u5F85\u8865\u5145 ${this.preview.missingRules.length} \u6761\u5FFD\u7565\u89C4\u5219\uFF1B${this.preview.paths.length} \u4E2A\u5DF2\u8FFD\u8E2A\u6587\u4EF6\u5E94\u6539\u4E3A\u4EC5\u672C\u673A\u4FDD\u7559\u3002`, cls: "zoey-sync-tracking-summary" });
-    body.createEl("p", { text: "\u4FEE\u590D\u53EA\u8C03\u6574\u8FD9\u4E9B\u6587\u4EF6\u7684 Git \u8DDF\u8E2A\uFF0C\u5E76\u8865\u9F50\u7F3A\u5C11\u7684 .gitignore \u89C4\u5219\u3002\u672C\u673A\u6587\u4EF6\u548C Git \u5386\u53F2\u90FD\u4F1A\u4FDD\u7559\uFF1B\u4E0B\u4E00\u6B21 Commit\u3001Push \u540E\uFF0C\u6587\u4EF6\u4F1A\u4ECE\u8FDC\u7AEF\u5F53\u524D\u7248\u672C\u9000\u51FA\u3002", cls: "zoey-sync-tracking-description" });
+    body.createEl("p", { text: "\u4FEE\u590D\u53EA\u8C03\u6574\u8FD9\u4E9B\u6587\u4EF6\u7684 Git \u8DDF\u8E2A\uFF0C\u5E76\u8865\u9F50\u7F3A\u5C11\u7684 .gitignore \u89C4\u5219\u3002\u672C\u673A\u6587\u4EF6\u548C Git \u5386\u53F2\u90FD\u4F1A\u4FDD\u7559\uFF1B\u4E0B\u4E00\u6B21 commit\u3001push \u540E\uFF0C\u6587\u4EF6\u4F1A\u4ECE\u8FDC\u7AEF\u5F53\u524D\u7248\u672C\u9000\u51FA\u3002", cls: "zoey-sync-tracking-description" });
     if (this.preview.missingRules.length) {
       const rules = body.createEl("details", { cls: "zoey-sync-tracking-details" });
       rules.createEl("summary", { text: `\u67E5\u770B\u5F85\u8865\u5145\u7684\u89C4\u5219\uFF08${this.preview.missingRules.length}\uFF09` });
@@ -5033,9 +5075,9 @@ var GitRepairModal = class extends import_obsidian5.Modal {
     });
     const list = container.createEl("ul");
     list.createEl("li", { text: "\u4FDD\u62A4\u5F53\u524D\u672C\u673A\u5185\u5BB9\uFF0C\u5E76\u9000\u51FA\u672A\u5B8C\u6210\u7684\u5F02\u5E38\u64CD\u4F5C\u3002" });
-    list.createEl("li", { text: "\u4EE5\u6062\u590D\u540E\u7684\u672C\u673A\u5185\u5BB9\u5EFA\u7ACB\u4E00\u4E2A\u65B0\u7684 Commit\u3002" });
-    list.createEl("li", { text: "Fetch \u4E91\u7AEF\u7248\u672C\u5E76\u5728\u672C\u673A Merge\uFF1B\u5982\u6709\u51B2\u7A81\uFF0C\u5728\u53F3\u4FA7\u9762\u677F\u9010\u9879\u9009\u62E9\u3002" });
-    list.createEl("li", { text: "\u4FEE\u590D\u5B8C\u6210\u540E\u7B49\u5F85\u6B63\u5E38 Push \u8BA1\u65F6\uFF0C\u4E0D\u4F1A\u7ACB\u5373\u4E0A\u4F20\u3002" });
+    list.createEl("li", { text: "\u4EE5\u6062\u590D\u540E\u7684\u672C\u673A\u5185\u5BB9\u5EFA\u7ACB\u4E00\u4E2A\u65B0\u7684 commit\u3002" });
+    list.createEl("li", { text: "Fetch \u4E91\u7AEF\u7248\u672C\u5E76\u5728\u672C\u673A merge\uFF1B\u5982\u6709\u51B2\u7A81\uFF0C\u5728\u53F3\u4FA7\u9762\u677F\u9010\u9879\u9009\u62E9\u3002" });
+    list.createEl("li", { text: "\u4FEE\u590D\u5B8C\u6210\u540E\u7B49\u5F85\u6B63\u5E38 push \u8BA1\u65F6\uFF0C\u4E0D\u4F1A\u7ACB\u5373\u4E0A\u4F20\u3002" });
     container.createEl("p", {
       text: "\u64CD\u4F5C\u524D\u4F1A\u5EFA\u7ACB\u4E34\u65F6\u5B89\u5168\u5907\u4EFD\uFF1B\u6062\u590D\u6210\u529F\u540E\u81EA\u52A8\u6E05\u7406\uFF0C\u901A\u5E38\u4E0D\u9700\u8981\u4F60\u5904\u7406\u3002",
       cls: "zoey-sync-conflict__warning"
@@ -5056,7 +5098,7 @@ var GitRepairModal = class extends import_obsidian5.Modal {
         );
       }).catch((error) => {
         if (error instanceof SyncDeferredError) {
-          new import_obsidian5.Notice("Simple Link\uFF1A\u5F02\u5E38\u72B6\u6001\u5DF2\u9000\u51FA\uFF0C\u672C\u673A\u5185\u5BB9\u5DF2\u91CD\u65B0 Commit\uFF1B\u5408\u5E76\u51B2\u7A81\u5DF2\u4FDD\u7559\u5728\u540C\u6B65\u9762\u677F\u7B49\u5F85\u5904\u7406", 12e3);
+          new import_obsidian5.Notice("Simple Link\uFF1A\u5F02\u5E38\u72B6\u6001\u5DF2\u9000\u51FA\uFF0C\u672C\u673A\u5185\u5BB9\u5DF2\u91CD\u65B0 commit\uFF1B\u5408\u5E76\u51B2\u7A81\u5DF2\u4FDD\u7559\u5728\u540C\u6B65\u9762\u677F\u7B49\u5F85\u5904\u7406", 12e3);
         } else {
           new import_obsidian5.Notice(`Simple Link\uFF1A\u5F02\u5E38\u4FEE\u590D\u672A\u5B8C\u6210\u3002${messageOf2(error)}`, 15e3);
         }
@@ -5075,7 +5117,7 @@ var LocalHistorySlimModal = class extends import_obsidian5.Modal {
     const body = this.contentEl;
     body.empty();
     body.createEl("h2", { text: "\u672C\u5730 Git \u5386\u53F2\u7626\u8EAB" });
-    body.createEl("p", { text: "\u5DF2\u5B9E\u65F6\u6838\u5BF9 GitHub \u5206\u652F\u4E0E\u672C\u673A HEAD \u4E00\u81F4\uFF0C\u5F53\u524D\u63D0\u4EA4\u5DF2\u4E0A\u4F20\u3002\u6267\u884C\u65F6\u4F1A\u518D\u6838\u5BF9\u4E00\u6B21\u3002" });
+    body.createEl("p", { text: "\u5DF2\u5B9E\u65F6\u6838\u5BF9 GitHub \u5206\u652F\u4E0E\u672C\u673A head \u4E00\u81F4\uFF0C\u5F53\u524D\u63D0\u4EA4\u5DF2\u4E0A\u4F20\u3002\u6267\u884C\u65F6\u4F1A\u518D\u6838\u5BF9\u4E00\u6B21\u3002" });
     body.createEl("p", {
       text: `\u672C\u673A\u7EA6\u6709 ${this.preview.totalCommits} \u4E2A\u53EF\u89C1 Commit\uFF0C\u5176\u4E2D ${this.preview.oldCommits} \u4E2A\u65E9\u4E8E 30 \u5929\uFF1BGit \u5BF9\u8C61\u7EA6 ${this.preview.localSizeMiB.toFixed(1)} MiB\u3002`
     });
@@ -5103,7 +5145,7 @@ var LocalHistorySlimModal = class extends import_obsidian5.Modal {
       });
     });
     if (this.preview.oldCommits === 0) {
-      body.createEl("p", { text: "\u5F53\u524D\u6CA1\u6709\u65E9\u4E8E 30 \u5929\u7684\u53EF\u89C1 Commit\uFF0C\u65E0\u9700\u6E05\u7406\u3002" });
+      body.createEl("p", { text: "\u5F53\u524D\u6CA1\u6709\u65E9\u4E8E 30 \u5929\u7684\u53EF\u89C1 commit\uFF0C\u65E0\u9700\u6E05\u7406\u3002" });
     }
   }
 };
@@ -5186,7 +5228,7 @@ var _ZoeySyncConflictView = class _ZoeySyncConflictView extends import_obsidian5
     this.renderFooter(container);
   }
   renderTextBlocks(container, path2, content, blocks) {
-    const resolutions = new Array(blocks.length);
+    const resolutions = Array.from({ length: blocks.length });
     let applyButton;
     blocks.forEach((block, index) => {
       const card = container.createDiv({ cls: "zoey-sync-conflict__block" });
@@ -5217,7 +5259,7 @@ var _ZoeySyncConflictView = class _ZoeySyncConflictView extends import_obsidian5
       cls: "mod-cta zoey-sync-conflict__continue"
     });
     applyButton.disabled = true;
-    applyButton.addEventListener("click", async () => {
+    applyButton.addEventListener("click", asyncAction(async () => {
       if (resolutions.some((item) => item === void 0)) return;
       applyButton.disabled = true;
       try {
@@ -5227,7 +5269,7 @@ var _ZoeySyncConflictView = class _ZoeySyncConflictView extends import_obsidian5
         new import_obsidian5.Notice(`\u65E0\u6CD5\u5E94\u7528\u51B2\u7A81\u5904\u7406\u7ED3\u679C\uFF1A${messageOf2(error)}`, 8e3);
         applyButton.disabled = false;
       }
-    });
+    }));
     this.renderFooter(container);
   }
   renderVersion(container, label, value, className) {
@@ -5242,7 +5284,7 @@ var _ZoeySyncConflictView = class _ZoeySyncConflictView extends import_obsidian5
   }
   renderFooter(container) {
     const footer = container.createDiv({ cls: "zoey-sync-conflict__footer" });
-    const explanation = footer.createEl("span", {
+    const explanation = footer.createSpan({
       text: this.paths.length > 1 ? "\u53EF\u4EE5\u5148\u5904\u7406\u5176\u4ED6\u6587\u4EF6\uFF1B\u672A\u5904\u7406\u7684\u51B2\u7A81\u4F1A\u4E00\u76F4\u4FDD\u7559\u5728\u540C\u6B65\u9762\u677F\u3002" : "\u672A\u5904\u7406\u7684\u51B2\u7A81\u4F1A\u4E00\u76F4\u4FDD\u7559\u5728\u540C\u6B65\u9762\u677F\uFF0C\u7A0D\u540E\u53EF\u4EE5\u7EE7\u7EED\u3002"
     });
     const actions = footer.createDiv({ cls: "zoey-sync-conflict__footer-actions" });
@@ -5276,7 +5318,7 @@ var ErrorLogModal = class extends import_obsidian5.Modal {
   }
   onOpen() {
     this.modalEl.addClass("zoey-sync-error-modal");
-    this.render();
+    void this.render().catch((error) => new import_obsidian5.Notice(messageOf2(error), 8e3));
   }
   async render() {
     const lastCommitAt = await this.plugin.getLatestCommitAt();
@@ -5286,7 +5328,7 @@ var ErrorLogModal = class extends import_obsidian5.Modal {
     const heading = overview.createDiv();
     heading.createEl("h2", { text: "\u6700\u8FD1\u540C\u6B65\u65E5\u5FD7" });
     heading.createEl("p", {
-      text: "\u4EC5\u4FDD\u7559\u6700\u8FD1 24 \u5C0F\u65F6\u7684 Commit\u3001\u540C\u6B65\u548C\u8FDE\u63A5\u8BB0\u5F55\u3002",
+      text: "\u4EC5\u4FDD\u7559\u6700\u8FD1 24 \u5C0F\u65F6\u7684 commit\u3001\u540C\u6B65\u548C\u8FDE\u63A5\u8BB0\u5F55\u3002",
       cls: "zoey-sync-error-modal__intro"
     });
     const lastTimes = overview.createDiv({ cls: "zoey-sync-error-modal__last-times" });
@@ -5328,10 +5370,10 @@ var ErrorLogModal = class extends import_obsidian5.Modal {
     const actions = container.createDiv({ cls: "zoey-sync-error-modal__actions" });
     if (logs.length > 0) {
       const clearButton = actions.createEl("button", { text: "\u6E05\u7A7A\u65E5\u5FD7" });
-      clearButton.addEventListener("click", async () => {
+      clearButton.addEventListener("click", asyncAction(async () => {
         await this.plugin.clearErrorLogs();
         await this.render();
-      });
+      }));
     }
     const closeButton = actions.createEl("button", { text: "\u5173\u95ED", cls: "mod-cta" });
     closeButton.addEventListener("click", () => this.close());
@@ -5450,7 +5492,7 @@ var _ZoeySyncView = class _ZoeySyncView extends import_obsidian5.ItemView {
     settingsButton.addEventListener("click", (event) => this.openViewSettingsMenu(event));
     const status = container.createDiv({ cls: "zoey-sync-view__status" });
     status.addClass(`is-${statusState.tone}`);
-    const statusDot = status.createSpan({ cls: "zoey-sync-view__status-dot" });
+    status.createSpan({ cls: "zoey-sync-view__status-dot" });
     status.createSpan({ text: statusState.text, cls: "zoey-sync-view__status-text" });
     if (pendingConflictPaths.length > 0) {
       const reminder = container.createDiv({ cls: "zoey-sync-view__conflict-reminder" });
@@ -5490,14 +5532,19 @@ var _ZoeySyncView = class _ZoeySyncView extends import_obsidian5.ItemView {
       "aria-label",
       mode === "commit" ? "Commit \u5F53\u524D\u5217\u8868\u4E2D\u7684\u672C\u673A\u66F4\u6539" : "\u4E0B\u8F7D\u8FDC\u7AEF\u66F4\u65B0\u5E76\u4E0A\u4F20\u672C\u673A\u66F4\u6539"
     );
-    actionButton.addEventListener("click", async () => {
+    actionButton.addEventListener("click", asyncAction(async () => {
       actionButton.disabled = true;
       actionButton.addClass("is-loading");
       actionLabel.setText(mode === "commit" ? "Commit \u4E2D\u2026" : "\u540C\u6B65\u4E2D\u2026");
-      if (mode === "commit") await this.plugin.commitNow(true);
-      else await this.plugin.syncNow(true);
-      await this.render();
-    });
+      try {
+        if (mode === "commit") await this.plugin.commitNow(true);
+        else await this.plugin.syncNow(true);
+        await this.render();
+      } finally {
+        actionButton.disabled = this.plugin.isSyncing();
+        actionButton.removeClass("is-loading");
+      }
+    }));
     if (this.plugin.settings.showVersionViewSwitcher) {
       sectionHeader.addClass("has-mode-control");
       this.createModeControl(sectionHeader, mode);
@@ -5554,7 +5601,8 @@ var _ZoeySyncView = class _ZoeySyncView extends import_obsidian5.ItemView {
       button.toggleClass("is-active", value === current);
       button.setAttr("aria-pressed", String(value === current));
       button.setAttr("aria-label", tooltip);
-      button.innerHTML = svg;
+      (0, import_obsidian5.addIcon)(`simple-link-mode-${value}`, svg);
+      (0, import_obsidian5.setIcon)(button, `simple-link-mode-${value}`);
       (0, import_obsidian5.setTooltip)(button, tooltip);
       button.addEventListener("click", () => void this.plugin.setChangeViewMode(value));
     };
@@ -5572,7 +5620,7 @@ var _ZoeySyncView = class _ZoeySyncView extends import_obsidian5.ItemView {
   openViewSettingsMenu(event) {
     const menu = new import_obsidian5.Menu();
     menu.addItem(
-      (item) => item.setTitle("\u663E\u793A\u5F85 Commit \u5217\u8868").setIcon(this.plugin.settings.showVersionViewSwitcher ? CHECKBOX_CHECKED_ICON : "square").onClick(() => void this.plugin.setVersionViewSwitcher(!this.plugin.settings.showVersionViewSwitcher))
+      (item) => item.setTitle("\u663E\u793A\u5F85 commit \u5217\u8868").setIcon(this.plugin.settings.showVersionViewSwitcher ? CHECKBOX_CHECKED_ICON : "square").onClick(() => void this.plugin.setVersionViewSwitcher(!this.plugin.settings.showVersionViewSwitcher))
     );
     menu.addSeparator();
     menu.addItem(
@@ -5697,8 +5745,24 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     this.setupMessage = "";
     this.setupFailure = false;
   }
+  getSettingDefinitions() {
+    return [{ name: "\u540C\u6B65\u4E0E\u8BBE\u5907\u8BBE\u7F6E", aliases: ["\u7535\u8111", "\u624B\u673A", "\u670D\u52A1\u5668", "GitHub", "Token"], render: (setting) => {
+      setting.settingEl.empty();
+      setting.settingEl.addClass("simple-link-settings-render");
+      this.settingsHost = setting.settingEl;
+      this.renderSettings();
+      return () => {
+        this.settingsHost = void 0;
+        this.lightweightGuideController?.abort();
+        this.setupBrowserController?.abort();
+      };
+    } }];
+  }
   display() {
-    const { containerEl } = this;
+    this.renderSettings();
+  }
+  renderSettings() {
+    const containerEl = this.settingsHost ?? this.containerEl;
     containerEl.empty();
     if (this.desktopPage !== "beginner-mobile") {
       this.lightweightGuideController?.abort();
@@ -5741,7 +5805,6 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
       this.displayDesktopSettings(containerEl);
       return;
     }
-    containerEl.createEl("h2", { text: "Simple Link" });
     this.addEnableSetting(containerEl);
     this.addDefaultRepoSetting(containerEl);
     this.displayBeginner(containerEl);
@@ -5758,14 +5821,14 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     if (import_obsidian5.Platform.isMobile) return;
     const row = new import_obsidian5.Setting(parent).setName("\u542F\u7528\u7535\u8111\u7AEF\u539F\u751F Git \u540C\u6B65").setDesc("\u5173\u95ED\u540E\u505C\u6B62\u539F\u751F Git \u540C\u6B65\uFF0C\u4E0B\u65B9\u8BBE\u7F6E\u6682\u505C\u4F7F\u7528\u3002").addToggle((toggle) => toggle.setValue(this.plugin.nativeGitEnabled()).onChange(async (enabled) => {
       await this.plugin.setDesktopSyncMode(enabled ? "git" : this.plugin.useLightweightSync() ? "lightweight" : "off");
-      this.display();
+      this.renderSettings();
     }));
     row.settingEl.addClass("zoey-sync-engine-switch");
   }
   addLightweightEngineControl(parent) {
     const row = new import_obsidian5.Setting(parent).setName("\u542F\u7528\u8F7B\u91CF Git \u540C\u6B65").setDesc("\u5173\u95ED\u540E\u505C\u6B62\u8F7B\u91CF\u540C\u6B65\uFF0C\u4E0B\u65B9\u8BBE\u7F6E\u6682\u505C\u4F7F\u7528\u3002").addToggle((toggle) => toggle.setValue(this.plugin.useLightweightSync()).onChange(async (enabled) => {
       await this.plugin.setLightweightSyncEnabled(enabled);
-      this.display();
+      this.renderSettings();
     }));
     row.settingEl.addClass("zoey-sync-engine-switch");
   }
@@ -5780,17 +5843,17 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     new import_obsidian5.Setting(parent).setName("\u542F\u7528 Simple Link").setDesc("\u663E\u793A\u53F3\u4FA7\u540C\u6B65\u9762\u677F\uFF0C\u5E76\u5141\u8BB8\u624B\u52A8\u6216\u5B9A\u65F6\u540C\u6B65\u3002\u5173\u95ED\u540E\u4FDD\u7559\u914D\u7F6E\uFF0C\u4F46\u505C\u6B62\u672C\u63D2\u4EF6\u7684\u540C\u6B65\u5DE5\u4F5C\u3002").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.enabled).onChange(async (value) => {
         await this.plugin.setFeatureEnabled(value);
-        this.display();
+        this.renderSettings();
       })
     );
   }
   displayMobile(containerEl) {
-    containerEl.createEl("h3", { text: "\u624B\u673A\u7AEF\u8BBE\u7F6E", cls: "zoey-sync-section-title" });
+    new import_obsidian5.Setting(containerEl).setName("\u624B\u673A\u7AEF\u8BBE\u7F6E").setHeading();
     containerEl.createEl("p", {
       text: "\u79FB\u52A8\u7AEF\u517C\u5BB9\u4ECD\u5728\u5B8C\u5584\uFF0C\u4EE5\u4E0B\u4EC5\u4FDD\u7559\u5F53\u524D\u5DF2\u7ECF\u5B9E\u73B0\u7684\u670D\u52A1\u5668\u540C\u6B65\u8BBE\u7F6E\u3002",
       cls: "zoey-sync-section-desc"
     });
-    new import_obsidian5.Setting(containerEl).setName("\u670D\u52A1\u5668\u5730\u5740").setDesc("\u516C\u7F51\u5FC5\u987B\u4F7F\u7528 HTTPS\uFF0C\u4F8B\u5982 https://sync.example.com\u3002").addText(
+    new import_obsidian5.Setting(containerEl).setName("\u670D\u52A1\u5668\u5730\u5740").setDesc("\u516C\u7F51\u5FC5\u987B\u4F7F\u7528 HTTPS\uFF0C\u4F8B\u5982 HTTPS://sync.example.com\u3002").addText(
       (text) => text.setPlaceholder("https://sync.example.com").setValue(this.plugin.settings.serverUrl).onChange(async (value) => {
         this.plugin.settings.serverUrl = value.trim();
         await this.plugin.saveSettings();
@@ -5836,7 +5899,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     button.addEventListener("click", () => {
       if (page === "setup") this.prepareSetupGuide();
       this.desktopPage = page;
-      this.display();
+      this.renderSettings();
     });
   }
   prepareSetupGuide() {
@@ -5849,7 +5912,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     this.setupRepoMode = "existing";
   }
   displayBeginner(containerEl) {
-    containerEl.createEl("h3", { text: "\u5165\u95E8\u5C0F\u52A9\u624B", cls: "zoey-sync-section-title" });
+    new import_obsidian5.Setting(containerEl).setName("\u5165\u95E8\u5C0F\u52A9\u624B").setHeading();
     containerEl.createEl("p", { text: "\u4ECE\u521B\u5EFA\u4ED3\u5E93\u5F00\u59CB\uFF0C\u6309\u8BBE\u5907\u67E5\u770B\u63A5\u5165\u6B65\u9AA4\u3002", cls: "zoey-sync-section-desc" });
     const links = containerEl.createDiv({ cls: "zoey-sync-beginner-links" });
     this.addBeginnerLink(links, "\u7535\u8111\u7AEF\u540C\u6B65\u5F15\u5BFC", "monitor", import_obsidian5.Platform.isMobile ? "beginner-desktop" : "setup");
@@ -5871,7 +5934,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         branch: options.repoUrl === repoUrl ? options.branch : ""
       };
     }
-    page.createEl("div", { text: "\u63A5\u5165\u8FDB\u5EA6", cls: "zoey-sync-setup-progress-label" });
+    page.createDiv({ text: "\u63A5\u5165\u8FDB\u5EA6", cls: "zoey-sync-setup-progress-label" });
     const nav = page.createDiv({ cls: "zoey-sync-setup-nav zoey-sync-lightweight-nav" });
     const available = this.lightweightGuideVerified ? 4 : this.lightweightGuideLogin ? 3 : 2;
     ["\u83B7\u53D6 Token", "\u6838\u9A8C Token", "\u9009\u62E9\u4ED3\u5E93", "\u540C\u6B65\u89C4\u5219"].forEach((label, index) => {
@@ -5888,7 +5951,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         if (this.lightweightGuideBusy || step === 3 && !this.lightweightGuideLogin || step === 4 && !this.lightweightGuideVerified) return;
         this.lightweightGuideController?.abort();
         this.lightweightGuideStep = step;
-        this.display();
+        this.renderSettings();
       });
     });
     if (this.lightweightGuideStep !== 1) {
@@ -5897,8 +5960,8 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     }
     const card = page.createDiv({ cls: "zoey-sync-mobile-guide__card" });
     const ready = !!this.lightweightGuideToken;
-    card.createEl("h3", { text: "1 \xB7 \u83B7\u53D6 Token", cls: "zoey-sync-mobile-guide__title" });
-    card.createEl("p", { text: "\u5EFA\u8BAE\u5148\u5728\u7535\u8111\u7AEF\u5B8C\u6210\u6D4F\u89C8\u5668\u767B\u5F55\u6388\u6743\uFF0C\u518D\u5728\u672C\u5F15\u5BFC\u5185\u4E00\u952E\u83B7\u53D6 Token\u3002\u624B\u673A\u7AEF\u53EF\u9009\u62E9\u300C\u5DF2\u6709 Token\uFF0C\u76F4\u63A5\u586B\u5165\u300D\u6838\u9A8C\u8FDE\u63A5\u3002", cls: "zoey-sync-section-desc" });
+    new import_obsidian5.Setting(card).setName("1 \xB7 \u83B7\u53D6 token").setHeading();
+    card.createEl("p", { text: "\u5EFA\u8BAE\u5148\u5728\u7535\u8111\u7AEF\u5B8C\u6210\u6D4F\u89C8\u5668\u767B\u5F55\u6388\u6743\uFF0C\u518D\u5728\u672C\u5F15\u5BFC\u5185\u4E00\u952E\u83B7\u53D6 token\u3002\u624B\u673A\u7AEF\u53EF\u9009\u62E9\u300C\u5DF2\u6709 token\uFF0C\u76F4\u63A5\u586B\u5165\u300D\u6838\u9A8C\u8FDE\u63A5\u3002", cls: "zoey-sync-section-desc" });
     const loginStatus = card.createDiv({ cls: "zoey-sync-setup-status", attr: { role: "status", "aria-live": "polite" } });
     const loginIcon = loginStatus.createSpan({ cls: "zoey-sync-setup-status__icon" });
     (0, import_obsidian5.setIcon)(loginIcon, "loader-circle");
@@ -5910,11 +5973,11 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     prerequisites.addEventListener("click", () => {
       this.desktopPage = import_obsidian5.Platform.isMobile ? "beginner-desktop" : "setup";
       this.setupViewStep = 1;
-      this.display();
+      this.renderSettings();
     });
     const actions = card.createDiv({ cls: "zoey-sync-mobile-guide__actions" });
-    const acquire = actions.createEl("button", { text: "\u4E00\u952E\u83B7\u53D6 Token\uFF08PC \u7AEF\uFF09", cls: import_obsidian5.Platform.isMobile ? "" : "mod-cta", attr: { type: "button" } });
-    const fill = actions.createEl("button", { text: "\u5DF2\u6709 Token\uFF0C\u76F4\u63A5\u586B\u5165", cls: import_obsidian5.Platform.isMobile ? "mod-cta" : "", attr: { type: "button" } });
+    const acquire = actions.createEl("button", { text: "\u4E00\u952E\u83B7\u53D6 token\uFF08pc \u7AEF\uFF09", cls: import_obsidian5.Platform.isMobile ? "" : "mod-cta", attr: { type: "button" } });
+    const fill = actions.createEl("button", { text: "\u5DF2\u6709 token\uFF0C\u76F4\u63A5\u586B\u5165", cls: import_obsidian5.Platform.isMobile ? "mod-cta" : "", attr: { type: "button" } });
     let loginReady = false;
     let acquiring = false;
     acquire.disabled = true;
@@ -5931,7 +5994,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     tokenBox.createDiv({ text: "GitHub Token", cls: "zoey-sync-mobile-guide__token-label" });
     const row = tokenBox.createDiv({ cls: "zoey-sync-mobile-guide__token-row" });
     row.createEl("code", { text: this.lightweightGuideToken, cls: "zoey-sync-mobile-guide__token-text" });
-    const copy = row.createEl("button", { text: "\u590D\u5236 Token", attr: { type: "button" } });
+    const copy = row.createEl("button", { text: "\u590D\u5236 token", attr: { type: "button" } });
     const copyStatus = tokenBox.createEl("p", { cls: "zoey-sync-mobile-guide__result", attr: { role: "status", "aria-live": "polite" } });
     const reportCopy = (text, error = false) => {
       copyStatus.setText(text);
@@ -5939,7 +6002,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
       copyStatus.toggleClass("zoey-sync-setup-error", error);
     };
     copy.addEventListener("click", () => void navigator.clipboard.writeText(this.lightweightGuideToken).then(() => reportCopy("Token \u5DF2\u590D\u5236\u3002"), () => reportCopy("\u590D\u5236\u5931\u8D25\uFF0C\u8BF7\u624B\u52A8\u590D\u5236 Token\u3002", true)));
-    tokenBox.createEl("p", { text: "\u8BF7\u59A5\u5584\u4FDD\u5B58 Token\uFF0C\u4FBF\u4E8E\u5728\u624B\u673A\u7AEF\u586B\u5165\u6216\u66F4\u6362\u8BBE\u5907\u65F6\u4F7F\u7528\u3002", cls: "zoey-sync-mobile-guide__token-reminder" });
+    tokenBox.createEl("p", { text: "\u8BF7\u59A5\u5584\u4FDD\u5B58 token\uFF0C\u4FBF\u4E8E\u5728\u624B\u673A\u7AEF\u586B\u5165\u6216\u66F4\u6362\u8BBE\u5907\u65F6\u4F7F\u7528\u3002", cls: "zoey-sync-mobile-guide__token-reminder" });
     const accept = (token) => {
       if (!valid()) return;
       this.lightweightGuideDraft.token = token;
@@ -5947,11 +6010,11 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
       this.lightweightGuideVerified = void 0;
       this.lightweightGuideToken = token;
       this.lightweightGuideStatus = "";
-      this.display();
+      this.renderSettings();
     };
     fill.addEventListener("click", () => {
       this.lightweightGuideStep = 2;
-      this.display();
+      this.renderSettings();
     });
     const updateLoginStatus = (loggedIn, description, needsPrerequisites = !loggedIn) => {
       if (!valid()) return;
@@ -5966,7 +6029,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     };
     if (import_obsidian5.Platform.isMobile) {
       loginTitle.setText("\u5728\u7535\u8111\u7AEF\u83B7\u53D6\uFF0C\u5728\u624B\u673A\u7AEF\u586B\u5165");
-      loginDescription.setText("\u8BF7\u5148\u5728\u7535\u8111\u7AEF\u83B7\u53D6 Token\uFF0C\u518D\u70B9\u51FB\u300C\u5DF2\u6709 Token\uFF0C\u76F4\u63A5\u586B\u5165\u300D\u6838\u9A8C\u8FDE\u63A5\u3002");
+      loginDescription.setText("\u8BF7\u5148\u5728\u7535\u8111\u7AEF\u83B7\u53D6 token\uFF0C\u518D\u70B9\u51FB\u300C\u5DF2\u6709 token\uFF0C\u76F4\u63A5\u586B\u5165\u300D\u6838\u9A8C\u8FDE\u63A5\u3002");
       (0, import_obsidian5.setIcon)(loginIcon, "smartphone");
     } else {
       void Promise.allSettled([
@@ -5997,7 +6060,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
           throw new Error("\u8BF7\u5148\u5B8C\u6210 GitHub \u767B\u5F55");
         }
         if (!valid() || login.signal.aborted) return;
-        loginDescription.setText("GitHub CLI \u767B\u5F55\u5DF2\u6838\u9A8C\uFF0C\u6B63\u5728\u83B7\u53D6 Token\u3002");
+        loginDescription.setText("GitHub CLI \u767B\u5F55\u5DF2\u6838\u9A8C\uFF0C\u6B63\u5728\u83B7\u53D6 token\u3002");
         report("\u6B63\u5728\u83B7\u53D6\u767B\u5F55 Token\u2026");
         const token = (await this.plugin.exec("gh", ["auth", "token", "--hostname", "github.com"], false, true, 3e4)).trim();
         if (!token) throw new Error("\u5F53\u524D\u767B\u5F55\u672A\u8FD4\u56DE Token");
@@ -6015,10 +6078,10 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     })());
     if (ready) {
       const footer = card.createDiv({ cls: "zoey-sync-setup-footer" });
-      const next = footer.createEl("button", { text: "\u6211\u5DF2\u4FDD\u5B58\u597D Token", cls: "mod-cta", attr: { type: "button", title: "\u7EE7\u7EED\u914D\u7F6E\u8F7B\u91CF\u540C\u6B65" } });
+      const next = footer.createEl("button", { text: "\u6211\u5DF2\u4FDD\u5B58\u597D token", cls: "mod-cta", attr: { type: "button", title: "\u7EE7\u7EED\u914D\u7F6E\u8F7B\u91CF\u540C\u6B65" } });
       next.addEventListener("click", () => {
         this.lightweightGuideStep = 2;
-        this.display();
+        this.renderSettings();
       });
     }
   }
@@ -6054,16 +6117,16 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
           control.disabled = disabled[index];
         });
         updateNext();
-        if (!valid() && this.desktopPage === "beginner-mobile" && this.lightweightGuideDraft === options) this.display();
+        if (!valid() && this.desktopPage === "beginner-mobile" && this.lightweightGuideDraft === options) this.renderSettings();
       }
     };
-    body.createEl("h3", { text: step === 2 ? "2 \xB7 \u6838\u9A8C Token" : step === 3 ? "\u9009\u62E9 GitHub \u79C1\u4EBA\u4ED3\u5E93" : "4 \xB7 \u8BBE\u7F6E\u540C\u6B65\u89C4\u5219", cls: step === 3 ? "zoey-sync-setup-step-title" : "zoey-sync-mobile-guide__title" });
+    new import_obsidian5.Setting(body).setName("").setHeading();
     if (step === 2) {
-      body.createEl("p", { text: "\u586B\u5165 Token\uFF0C\u6838\u9A8C\u662F\u5426\u80FD\u6210\u529F\u8FDE\u63A5 GitHub\u3002\u8FDE\u63A5\u6210\u529F\u540E\u81EA\u52A8\u8FDB\u5165\u9009\u62E9\u4ED3\u5E93\u3002" });
+      body.createEl("p", { text: "\u586B\u5165 token\uFF0C\u6838\u9A8C\u662F\u5426\u80FD\u6210\u529F\u8FDE\u63A5 GitHub\u3002\u8FDE\u63A5\u6210\u529F\u540E\u81EA\u52A8\u8FDB\u5165\u9009\u62E9\u4ED3\u5E93\u3002" });
       body.createEl("p", { text: "Token \u4EC5\u4FDD\u5B58\u5728\u672C\u673A\uFF0C\u4E0D\u5199\u5165\u5171\u4EAB\u914D\u7F6E\u3002" });
-      const tokenSetting = new import_obsidian5.Setting(body).setName("GitHub Token").addText((text) => {
+      const tokenSetting = new import_obsidian5.Setting(body).setName("GitHub token").addText((text) => {
         text.inputEl.type = "password";
-        text.setPlaceholder("\u7C98\u8D34 GitHub Token").setValue(options.token).onChange((value) => {
+        text.setPlaceholder("\u7C98\u8D34 GitHub token").setValue(options.token).onChange((value) => {
           options.token = value.trim();
           this.lightweightGuideToken = options.token;
           this.lightweightGuideLogin = "";
@@ -6082,7 +6145,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         if (!valid()) return;
         this.lightweightGuideLogin = login;
         this.lightweightGuideStep = 3;
-        this.display();
+        this.renderSettings();
       })));
       if (this.lightweightGuideLogin) report(`\u2713 Token \u6709\u6548\uFF0C\u5F53\u524D\u8D26\u53F7\uFF1A${this.lightweightGuideLogin}\u3002`);
     } else if (step === 3) {
@@ -6101,7 +6164,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         button.addEventListener("click", () => {
           this.lightweightGuideRepoMode = mode;
           this.lightweightGuideVerified = void 0;
-          this.display();
+          this.renderSettings();
         });
       }
       const card = body.createDiv({ cls: "zoey-sync-setup-detail" });
@@ -6115,13 +6178,13 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         options.branch = remote.branch;
         this.lightweightGuideVerified = remote;
         this.lightweightGuideStep = 4;
-        this.display();
+        this.renderSettings();
       };
       if (this.lightweightGuideRepoMode === "create") {
         const heading = card.createDiv({ cls: "zoey-sync-setup-section-header" });
-        heading.createEl("h4", { text: "\u521B\u5EFA GitHub \u65B0\u4ED3\u5E93" });
-        card.createEl("p", { text: "\u586B\u5199\u4ED3\u5E93\u540D\u79F0\u540E\uFF0C\u5728\u5F53\u524D GitHub \u8D26\u53F7\u4E0B\u521B\u5EFA Private\uFF08\u79C1\u4EBA\uFF09\u4ED3\u5E93\uFF0C\u5E76\u521D\u59CB\u5316 README \u548C\u9ED8\u8BA4\u5206\u652F\u3002\u6B64\u65F6\u4E0D\u4F1A\u63A8\u9001\u672C\u5730\u6587\u4EF6\u3002" });
-        new import_obsidian5.Setting(card).setName("\u65B0\u4ED3\u5E93\u540D\u79F0").addText((text) => text.setPlaceholder("\u4F8B\u5982 my-obsidian-vault").setValue(this.lightweightGuideRepoName).onChange((value) => {
+        new import_obsidian5.Setting(heading).setName("\u521B\u5EFA GitHub \u65B0\u4ED3\u5E93").setHeading();
+        card.createEl("p", { text: "\u586B\u5199\u4ED3\u5E93\u540D\u79F0\u540E\uFF0C\u5728\u5F53\u524D GitHub \u8D26\u53F7\u4E0B\u521B\u5EFA private\uFF08\u79C1\u4EBA\uFF09\u4ED3\u5E93\uFF0C\u5E76\u521D\u59CB\u5316 README \u548C\u9ED8\u8BA4\u5206\u652F\u3002\u6B64\u65F6\u4E0D\u4F1A\u63A8\u9001\u672C\u5730\u6587\u4EF6\u3002" });
+        new import_obsidian5.Setting(card).setName("\u65B0\u4ED3\u5E93\u540D\u79F0").addText((text) => text.setPlaceholder("\u4F8B\u5982 my-Obsidian-vault").setValue(this.lightweightGuideRepoName).onChange((value) => {
           this.lightweightGuideRepoName = value.trim();
         })).settingEl.addClass("zoey-sync-setup-repo-name");
         card.appendChild(status);
@@ -6135,14 +6198,14 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
           try {
             await checkRepository();
           } catch (error) {
-            this.display();
+            this.renderSettings();
             new import_obsidian5.Notice(`\u79C1\u4EBA\u4ED3\u5E93\u5DF2\u521B\u5EFA\uFF0C\u4F46\u6838\u9A8C\u672A\u5B8C\u6210\uFF1A${messageOf2(error)}\u3002\u8BF7\u68C0\u67E5\u5DF2\u6709\u4ED3\u5E93\u540E\u7EE7\u7EED\u3002`, 1e4);
           }
         }))).settingEl.addClass("zoey-sync-setup-action");
       } else {
-        card.createEl("h4", { text: "\u6838\u9A8C\u5DF2\u6709 GitHub \u4ED3\u5E93" });
-        card.createEl("p", { text: "\u5728\u5DF2\u6709 GitHub \u4ED3\u5E93\u9875\u9762\u70B9\u51FB\u300CCode\u300D\uFF0C\u590D\u5236 HTTPS \u5730\u5740\u5E76\u586B\u5165\u4E0B\u65B9\u3002" });
-        card.createEl("p", { text: "\u6838\u9A8C\u4ED3\u5E93\u79C1\u4EBA\u72B6\u6001\u3001\u9ED8\u8BA4\u4E3B\u5206\u652F\u4EE5\u53CA\u5F53\u524D Token \u7684\u8BFB\u5199\u6743\u9650\uFF0C\u901A\u8FC7\u540E\u81EA\u52A8\u8FDB\u5165\u540C\u6B65\u89C4\u5219\u3002", cls: "zoey-sync-setup-helper" });
+        new import_obsidian5.Setting(card).setName("\u6838\u9A8C\u5DF2\u6709 GitHub \u4ED3\u5E93").setHeading();
+        card.createEl("p", { text: "\u5728\u5DF2\u6709 GitHub \u4ED3\u5E93\u9875\u9762\u70B9\u51FB\u300Ccode\u300D\uFF0C\u590D\u5236 HTTPS \u5730\u5740\u5E76\u586B\u5165\u4E0B\u65B9\u3002" });
+        card.createEl("p", { text: "\u6838\u9A8C\u4ED3\u5E93\u79C1\u4EBA\u72B6\u6001\u3001\u9ED8\u8BA4\u4E3B\u5206\u652F\u4EE5\u53CA\u5F53\u524D token \u7684\u8BFB\u5199\u6743\u9650\uFF0C\u901A\u8FC7\u540E\u81EA\u52A8\u8FDB\u5165\u540C\u6B65\u89C4\u5219\u3002", cls: "zoey-sync-setup-helper" });
         const invalidate = () => {
           this.lightweightGuideVerified = void 0;
           status.empty();
@@ -6180,7 +6243,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
           await new Promise((resolve) => window.setTimeout(resolve, 650));
           if (!valid()) return;
           this.desktopPage = "mobile";
-          this.display();
+          this.renderSettings();
         });
       });
     }
@@ -6200,16 +6263,16 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     (0, import_obsidian5.setIcon)(back, "arrow-left");
     back.addEventListener("click", () => {
       this.desktopPage = "root";
-      this.display();
+      this.renderSettings();
     });
-    header.createEl("h2", { text: "\u7535\u8111\u7AEF Git \u540C\u6B65", cls: "zoey-sync-page-title" });
+    new import_obsidian5.Setting(header).setName("\u7535\u8111\u7AEF Git \u540C\u6B65").setHeading();
     this.addDesktopEngineControls(page);
     const body = this.syncSettingsBody(page, this.plugin.nativeGitEnabled());
     this.displayDesktopAdvanced(body);
   }
   displayDesktop(containerEl) {
     const currentDevice = this.currentDevice();
-    containerEl.createEl("h3", { text: "\u8BBE\u4E0D\u540C\u8BBE\u5907\u540C\u6B65\u8BBE\u7F6E", cls: "zoey-sync-section-title" });
+    new import_obsidian5.Setting(containerEl).setName("\u8BBE\u4E0D\u540C\u8BBE\u5907\u540C\u6B65\u8BBE\u7F6E").setHeading();
     containerEl.createEl("p", { text: "\u5DF2\u81EA\u52A8\u8BC6\u522B\u5F53\u524D\u8BBE\u5907\uFF1B\u7535\u8111\u4E5F\u53EF\u4EE5\u8FDB\u5165\u624B\u673A\u8F7B\u91CF\u540C\u6B65\u8FDB\u884C\u914D\u7F6E\u548C\u8FD0\u884C\u3002", cls: "zoey-sync-section-desc" });
     this.addSetupEntry(containerEl, currentDevice === "git");
     const entries = [
@@ -6233,7 +6296,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         (0, import_obsidian5.setIcon)(button.createSpan({ cls: "zoey-sync-page-link__chevron" }), "chevron-right");
         button.addEventListener("click", () => {
           this.desktopPage = entry.page;
-          this.display();
+          this.renderSettings();
         });
       }
     }
@@ -6244,26 +6307,26 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     (0, import_obsidian5.setIcon)(back, "arrow-left");
     back.addEventListener("click", () => {
       this.desktopPage = "root";
-      this.display();
+      this.renderSettings();
     });
-    header.createEl("h2", { text: title, cls: "zoey-sync-page-title" });
+    new import_obsidian5.Setting(header).setName("").setHeading();
     containerEl.createEl("p", { text: description, cls: "zoey-sync-section-desc" });
   }
   displayServerPreview(containerEl) {
     this.displayDevicePreview(containerEl, "\u670D\u52A1\u5668\u7AEF\u540C\u6B65", "Linux \u670D\u52A1\u5668\u7AEF\u7684\u540C\u6B65\u8BBE\u7F6E\u5C06\u5728\u8FD9\u91CC\u8865\u5145\u3002");
-    containerEl.createEl("h3", { text: "\u5F85\u66F4\u65B0", cls: "zoey-sync-section-title" });
+    new import_obsidian5.Setting(containerEl).setName("\u5F85\u66F4\u65B0").setHeading();
     const todo = containerEl.createEl("ul");
     todo.createEl("li", { text: "\u672C\u5730 Git \u5386\u53F2\u7626\u8EAB\uFF1A\u4EC5\u6574\u7406\u670D\u52A1\u5668\u672C\u673A\u7684\u65E7\u5386\u53F2\uFF0C\u4FDD\u7559 GitHub \u4E0A\u7684\u5B8C\u6574\u5386\u53F2\uFF1B\u6267\u884C\u524D\u786E\u8BA4\u672C\u5730\u63D0\u4EA4\u5DF2\u4E0A\u4F20\u3002" });
     todo.createEl("li", { text: "\u6309 .gitignore \u91CD\u5EFA\u8FFD\u8E2A\uFF1A\u8BA9\u5DF2\u8FFD\u8E2A\u3001\u540E\u6765\u88AB\u5FFD\u7565\u7684\u6587\u4EF6\u9000\u51FA Git \u7D22\u5F15\uFF0C\u4FDD\u7559\u670D\u52A1\u5668\u672C\u673A\u6587\u4EF6\uFF1B\u4E0D\u6539\u53D8\u624B\u673A\u7AEF\u7684\u6587\u4EF6\u62C9\u53D6\u8BBE\u7F6E\u3002" });
     todo.createEl("li", { text: "\u7535\u8111\u7AEF\u548C\u624B\u673A\u7AEF\u540C\u6B65\u9875\u5F85\u589E\u52A0\u300C\u9AD8\u7EA7\u8BBE\u7F6E\u300D\uFF1A\u9876\u90E8\u653E\u4FBF\u6377\u5F00\u5173\uFF0C\u4E0B\u9762\u5148\u653E\u300C\u91CD\u5EFA\u8FFD\u8E2A\u300D\uFF0C\u6700\u540E\u653E\u300C\u9884\u89C8\u5F53\u524D\u7684\u300D\uFF1B\u5177\u4F53\u8FFD\u8E2A\u8303\u56F4\u5F85\u786E\u8BA4\u3002" });
-    todo.createEl("li", { text: "\u5F85\u51B3\u5B9A .obsidian \u76EE\u5F55\u7684\u7B56\u7565\uFF1A\u6574\u76EE\u5F55\u9000\u51FA Git \u8FFD\u8E2A\uFF0C\u6216\u6309\u6838\u5FC3\u914D\u7F6E\u3001\u63D2\u4EF6\u3001\u4E3B\u9898\u5206\u7C7B\u4FDD\u7559\uFF1B\u6BCF\u53F0\u8BBE\u5907\u7684\u4E0B\u8F7D\u8303\u56F4\u53E6\u884C\u8BBE\u7F6E\u3002" });
+    todo.createEl("li", { text: "\u5F85\u51B3\u5B9A .Obsidian \u76EE\u5F55\u7684\u7B56\u7565\uFF1A\u6574\u76EE\u5F55\u9000\u51FA Git \u8FFD\u8E2A\uFF0C\u6216\u6309\u6838\u5FC3\u914D\u7F6E\u3001\u63D2\u4EF6\u3001\u4E3B\u9898\u5206\u7C7B\u4FDD\u7559\uFF1B\u6BCF\u53F0\u8BBE\u5907\u7684\u4E0B\u8F7D\u8303\u56F4\u53E6\u884C\u8BBE\u7F6E\u3002" });
     todo.createEl("li", { text: "\u7EF4\u62A4\u4EFB\u52A1\u4E0E\u540C\u6B65\u64CD\u4F5C\u9519\u5F00\u6267\u884C\uFF0C\u5E76\u5C55\u793A\u68C0\u67E5\u7ED3\u679C\u3001\u6267\u884C\u8BB0\u5F55\u548C\u64CD\u4F5C\u524D\u540E\u7684\u7A7A\u95F4\u5360\u7528\u3002" });
   }
   displayMobilePreview(containerEl) {
     this.displayDevicePreview(containerEl, "\u8F7B\u91CF Git \u540C\u6B65", "\u9002\u7528\u4E8E\u5B89\u5353\u3001iOS\uFF0C\u4E5F\u9002\u7528\u4E8E\u7535\u8111");
     this.addLightweightEngineControl(containerEl);
     const body = this.syncSettingsBody(containerEl, this.plugin.useLightweightSync());
-    renderMobileSettings(body, this.plugin.mobileHost(), false, () => this.display());
+    renderMobileSettings(body, this.plugin.mobileHost(), false, () => this.renderSettings());
     if (this.plugin.settings.mobile.mode === "server") this.displayMobile(body);
   }
   addSetupEntry(parent, isCurrent) {
@@ -6278,7 +6341,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     (0, import_obsidian5.setIcon)(button.createSpan({ cls: "zoey-sync-page-link__chevron" }), "chevron-right");
     button.addEventListener("click", () => {
       this.desktopPage = "desktop-settings";
-      this.display();
+      this.renderSettings();
     });
   }
   setupLink(parent, label, href) {
@@ -6303,7 +6366,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     };
     publish();
     const timer = step <= 3 ? window.setInterval(publish, 1e3) : void 0;
-    this.display();
+    this.renderSettings();
     try {
       await action();
       if (success !== void 0) this.setupMessage = success;
@@ -6317,7 +6380,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     } finally {
       if (timer !== void 0) window.clearInterval(timer);
       this.setupBusy = false;
-      this.display();
+      this.renderSettings();
     }
   }
   verifySetupAuthorization(action, success) {
@@ -6333,25 +6396,25 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
   }
   async advanceSetupAfterAuthorization() {
     this.syncSetupProgress(1, "\u2713 GitHub \u6388\u6743\u5DF2\u6838\u9A8C\uFF0C\u6B63\u5728\u8FDB\u5165\u9009\u62E9\u4ED3\u5E93\u3002", "success");
-    this.display();
+    this.renderSettings();
     const success = this.containerEl.querySelector(".zoey-sync-setup-auth .zoey-sync-setup-done");
     await new Promise((resolve) => window.setTimeout(resolve, 650));
     if (!success?.isConnected || this.desktopPage !== "setup" || this.setupViewStep !== 1 || this.setupPlatform !== "github" || !this.setupAuthVerified) return;
     this.setupViewStep = 2;
     this.setupMessage = "";
-    this.display();
+    this.renderSettings();
   }
   async advanceSetupAfterCheck(step, ready) {
     if (this.desktopPage !== "setup" || this.setupViewStep !== step || !ready()) return;
     this.setupMessage = "\u2713 \u5DF2\u6210\u529F\uFF0C\u6B63\u5728\u8FDB\u5165\u4E0B\u4E00\u6B65\u2026";
     this.syncSetupProgress(step, this.setupMessage, "success");
-    this.display();
+    this.renderSettings();
     const body = this.containerEl.querySelector(".zoey-sync-setup-body");
     await new Promise((resolve) => window.setTimeout(resolve, 650));
     if (!body?.isConnected || this.desktopPage !== "setup" || this.setupViewStep !== step || !ready()) return;
     this.setupViewStep = step + 1;
     this.setupMessage = "";
-    this.display();
+    this.renderSettings();
   }
   async advanceSetupAfterPreview() {
     if (this.plugin.settings.setupComplete || this.setupViewStep !== 3 || !this.setupPreviewReady()) return;
@@ -6359,7 +6422,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     await this.advanceSetupAfterCheck(3, () => this.setupPreviewReady());
   }
   updateSetupPreviewSelection() {
-    this.display();
+    this.renderSettings();
     if (this.setupPreviewReady()) {
       void this.runSetup(() => this.advanceSetupAfterPreview(), "", false);
     }
@@ -6399,14 +6462,14 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     };
     publish();
     const progressTimer = window.setInterval(publish, 1e3);
-    this.display();
+    this.renderSettings();
     try {
       await this.plugin.authorizeSetup((code) => {
         if (request !== this.setupBrowserRequest) return;
         this.setupDeviceCode = code;
         this.setupMessage = "\u8BBE\u5907\u7801\u5DF2\u83B7\u53D6\uFF0C\u7B49\u5F85\u6D4F\u89C8\u5668\u5B8C\u6210\u767B\u5F55\u6388\u6743\u2026";
         publish();
-        this.display();
+        this.renderSettings();
       }, controller.signal);
       if (request !== this.setupBrowserRequest) return;
       this.setupMessage = "\u6D4F\u89C8\u5668\u6388\u6743\u5DF2\u8FD4\u56DE\uFF0C\u6B63\u5728\u6838\u9A8C GitHub \u767B\u5F55\u72B6\u6001\u2026";
@@ -6428,7 +6491,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
       if (request === this.setupBrowserRequest) {
         this.setupBrowserPending = false;
         this.setupBrowserController = void 0;
-        this.display();
+        this.renderSettings();
       }
     }
   }
@@ -6440,9 +6503,9 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     back.addEventListener("click", () => {
       this.stopSetupBrowserAuthorization();
       this.desktopPage = "root";
-      this.display();
+      this.renderSettings();
     });
-    header.createEl("h2", { text: "\u4ECE\u521B\u5EFA\u4ED3\u5E93\u5F00\u59CB\uFF1A\u7535\u8111\u7AEF\u540C\u6B65", cls: "zoey-sync-page-title" });
+    new import_obsidian5.Setting(header).setName("\u4ECE\u521B\u5EFA\u4ED3\u5E93\u5F00\u59CB\uFF1A\u7535\u8111\u7AEF\u540C\u6B65").setHeading();
     page.createEl("p", { text: "\u6309\u987A\u5E8F\u5B8C\u6210\u56DB\u6B65\u3002\u5DF2\u6838\u9A8C\u7684\u6B65\u9AA4\u53EF\u4EE5\u968F\u65F6\u8FD4\u56DE\u67E5\u770B\u3002", cls: "zoey-sync-section-desc" });
     const guidedDone = this.plugin.settings.setupComplete && !!this.plugin.settings.setupVerified;
     const latestConnectionLog = this.plugin.getRecentErrorLogs().find((entry) => /测试连接|Fetch|Pull|Push|同步/.test(entry.context));
@@ -6492,9 +6555,9 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
       cancel.disabled = this.setupBusy;
       cancel.addEventListener("click", () => void this.runSetup(() => this.plugin.cancelSetup(), "\u5DF2\u6062\u590D\u4E4B\u524D\u7684\u540C\u6B65\u914D\u7F6E\u3002"));
     }
-    page.createEl("h3", { text: "\u63A5\u5165\u5F15\u5BFC", cls: "zoey-sync-section-title zoey-sync-setup-guide-title" });
+    new import_obsidian5.Setting(page).setName("\u63A5\u5165\u5F15\u5BFC").setHeading();
     const panel = page.createDiv({ cls: "zoey-sync-setup-tab-panel" });
-    panel.createEl("div", { text: "\u63A5\u5165\u8FDB\u5EA6", cls: "zoey-sync-setup-progress-label" });
+    panel.createDiv({ text: "\u63A5\u5165\u8FDB\u5EA6", cls: "zoey-sync-setup-progress-label" });
     const steps = ["\u5B89\u88C5\u4E0E\u6388\u6743", "\u9009\u62E9\u4ED3\u5E93", "\u68C0\u67E5\u4E24\u7AEF", "\u5B8C\u6210\u63A5\u5165"];
     const nav = panel.createDiv({ cls: "zoey-sync-setup-nav" });
     steps.forEach((label, index) => {
@@ -6508,11 +6571,10 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         this.setupViewStep = number;
         this.setupMessage = "";
         this.setupFailure = false;
-        this.display();
+        this.renderSettings();
       });
     });
     const body = panel.createDiv({ cls: "zoey-sync-card zoey-sync-setup-body" });
-    const titles = ["\u5B89\u88C5\u4E0E\u6388\u6743", "\u9009\u62E9 GitHub \u79C1\u4EBA\u4ED3\u5E93", "\u68C0\u67E5\u672C\u5730\u4E0E\u8FDC\u7AEF", "\u5B8C\u6210\u63A5\u5165"];
     const descriptions = [
       "",
       "\u53EF\u4EE5\u6838\u9A8C\u5DF2\u6709\u4ED3\u5E93\uFF0C\u4E5F\u53EF\u4EE5\u7531\u63D2\u4EF6\u521B\u5EFA\u4E00\u4E2A\u65B0\u7684\u79C1\u4EBA\u4ED3\u5E93\u3002",
@@ -6520,7 +6582,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
       guidedDone ? "\u63A5\u5165\u5DF2\u5B8C\u6210\uFF0C\u53EF\u56DE\u770B\u6838\u9A8C\u7ED3\u679C\u6216\u91CD\u65B0\u68C0\u67E5\u4E24\u7AEF\u72B6\u6001\u3002" : "\u786E\u8BA4\u63A5\u5165\u4FE1\u606F\uFF0C\u7136\u540E\u6267\u884C\u9996\u6B21\u63A8\u9001\u3002"
     ];
     if (this.setupViewStep !== 1) {
-      body.createEl("h3", { text: titles[this.setupViewStep - 1], cls: "zoey-sync-setup-step-title" });
+      new import_obsidian5.Setting(body).setName("").setHeading();
       body.createEl("p", { text: descriptions[this.setupViewStep - 1], cls: "zoey-sync-setup-step-desc" });
     }
     if (this.setupViewStep === 1) this.displaySetupAuth(body);
@@ -6531,7 +6593,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
   displaySetupAuth(body) {
     body.addClass("zoey-sync-setup-intro", "zoey-sync-setup-platform-step");
     const heading = body.createDiv({ cls: "zoey-sync-setup-section-header" });
-    heading.createEl("h4", { text: "\u9009\u62E9\u540C\u6B65\u5E73\u53F0" });
+    new import_obsidian5.Setting(heading).setName("\u9009\u62E9\u540C\u6B65\u5E73\u53F0").setHeading();
     heading.createSpan({ text: "\u5F53\u524D\u4EC5\u652F\u6301 GitHub", cls: "zoey-sync-setup-badge" });
     const options = body.createDiv({ cls: "zoey-sync-setup-options" });
     for (const platform of ["github", "gitee"]) {
@@ -6546,20 +6608,20 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         this.setupPlatform = platform;
         this.setupMessage = "";
         this.setupFailure = false;
-        this.display();
+        this.renderSettings();
       });
     }
     if (this.setupPlatform === "gitee") body.createEl("p", { text: "Gitee \u5C1A\u672A\u505A\u5B9E\u9645\u517C\u5BB9\uFF0C\u8BF7\u9009\u62E9 GitHub \u7EE7\u7EED\u3002", cls: "zoey-sync-setup-intro__unavailable" });
     else {
       const platformContent = body.createDiv({ cls: "zoey-sync-setup-platform-content", attr: { role: "group", "aria-label": "GitHub \u63A5\u5165\u6B65\u9AA4" } });
       const toolsCard = platformContent.createDiv({ cls: "zoey-sync-setup-detail" });
-      toolsCard.createEl("h4", { text: "\u5B89\u88C5\u5DE5\u5177" });
+      new import_obsidian5.Setting(toolsCard).setName("\u5B89\u88C5\u5DE5\u5177").setHeading();
       toolsCard.createEl("p", { text: "\u7535\u8111\u7AEF\u9700\u8981 Git \u6267\u884C\u540C\u6B65\u547D\u4EE4\uFF0CGitHub CLI \u7528\u4E8E\u767B\u5F55\u3001\u5EFA\u4ED3\u548C\u4ED3\u5E93\u6838\u9A8C\u3002\u82E5\u6CA1\u6709 GitHub \u8D26\u53F7\uFF0C\u8BF7\u5148\u5B8C\u6210\u6CE8\u518C\u3002" });
       const downloadLinks = toolsCard.createDiv({ cls: "zoey-sync-setup-links" });
       this.setupLink(downloadLinks, "\u4E0B\u8F7D Git \u2197", "https://git-scm.com/downloads");
       this.setupLink(downloadLinks, "\u4E0B\u8F7D GitHub CLI \u2197", "https://cli.github.com/");
       const authCard = platformContent.createDiv({ cls: "zoey-sync-setup-detail zoey-sync-setup-auth" });
-      authCard.createEl("h4", { text: "\u9009\u62E9 GitHub \u6388\u6743\u65B9\u5F0F" });
+      new import_obsidian5.Setting(authCard).setName("\u9009\u62E9 GitHub \u6388\u6743\u65B9\u5F0F").setHeading();
       const authOptions = authCard.createDiv({ cls: "zoey-sync-setup-options" });
       for (const mode of ["browser", "token", "verify"]) {
         const selected = this.setupAuthMode === mode;
@@ -6579,7 +6641,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
               () => this.verifyExistingSetupAuthorization(),
               "\u5DF2\u6210\u529F\uFF0CGitHub \u6388\u6743\u5DF2\u6838\u9A8C\u3002"
             );
-          } else this.display();
+          } else this.renderSettings();
         });
       }
       if (this.setupAuthMode === "browser") {
@@ -6605,14 +6667,14 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         refresh.addEventListener("click", () => void this.startSetupBrowserAuthorization());
         new import_obsidian5.Setting(authCard).addButton((button) => button.setButtonText("\u5DF2\u586B\u5199\u8BBE\u5907\u7801\uFF0C\u9A8C\u8BC1\u6388\u6743").setCta().setDisabled(this.setupBusy || !this.setupDeviceCode).onClick(() => this.verifySetupAuthorization(() => this.plugin.checkSetupAuthorization(), "GitHub \u6388\u6743\u5DF2\u6838\u9A8C\u3002"))).settingEl.addClass("zoey-sync-setup-auth-action", "zoey-sync-setup-auth-submit");
       } else if (this.setupAuthMode === "token") {
-        authCard.createEl("p", { text: "\u672C\u63D2\u4EF6\u4E0D\u5728\u8BBE\u7F6E\u4E2D\u4FDD\u5B58 Token\uFF1BToken \u4F1A\u4EA4\u7ED9\u672C\u673A GitHub CLI \u4FDD\u5B58\uFF0C\u7528\u4E8E\u767B\u5F55\u4E0E\u540E\u7EED\u540C\u6B65\u3002" });
+        authCard.createEl("p", { text: "\u672C\u63D2\u4EF6\u4E0D\u5728\u8BBE\u7F6E\u4E2D\u4FDD\u5B58 token\uFF1Btoken \u4F1A\u4EA4\u7ED9\u672C\u673A GitHub CLI \u4FDD\u5B58\uFF0C\u7528\u4E8E\u767B\u5F55\u4E0E\u540E\u7EED\u540C\u6B65\u3002" });
         const tokenHint = authCard.createDiv({ cls: "zoey-sync-setup-token-hint" });
         const hintIcon = tokenHint.createSpan({ cls: "zoey-sync-setup-token-hint__icon", attr: { "aria-hidden": "true" } });
         (0, import_obsidian5.setIcon)(hintIcon, "circle-alert");
         tokenHint.createSpan({ text: "\u521B\u5EFA Classic Token \u65F6\uFF0C\u8BF7\u52FE\u9009 repo\u3001read:org \u548C gist\uFF1B\u4EC5\u5F53\u9700\u8981\u540C\u6B65 GitHub Actions \u5DE5\u4F5C\u6D41\u6587\u4EF6\u65F6\uFF0C\u518D\u52FE\u9009 workflow\u3002" });
         let tokenVerifyButton;
-        const tokenSetting = new import_obsidian5.Setting(authCard).setName("GitHub Token").addText((text) => {
-          text.setPlaceholder("\u7C98\u8D34 Token").setValue(this.setupTokenInput);
+        const tokenSetting = new import_obsidian5.Setting(authCard).setName("GitHub token").addText((text) => {
+          text.setPlaceholder("\u7C98\u8D34 token").setValue(this.setupTokenInput);
           text.inputEl.type = "password";
           text.inputEl.autocomplete = "off";
           text.onChange((value) => {
@@ -6624,7 +6686,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         this.setupLink(tokenSetting.descEl, "\u524D\u5F80 GitHub \u521B\u5EFA Token \u2197", "https://github.com/settings/tokens");
         new import_obsidian5.Setting(authCard).addButton((button) => {
           tokenVerifyButton = button.buttonEl;
-          button.setButtonText("\u5DF2\u586B\u5199 Token\uFF0C\u9A8C\u8BC1\u6388\u6743").setCta().setDisabled(this.setupBusy || !this.setupTokenInput.trim()).onClick(() => {
+          button.setButtonText("\u5DF2\u586B\u5199 token\uFF0C\u9A8C\u8BC1\u6388\u6743").setCta().setDisabled(this.setupBusy || !this.setupTokenInput.trim()).onClick(() => {
             const token = this.setupTokenInput;
             this.setupTokenInput = "";
             this.verifySetupAuthorization(() => this.plugin.authorizeSetupWithToken(token), "GitHub Token \u5DF2\u901A\u8FC7 GitHub CLI \u6838\u9A8C\u3002");
@@ -6656,13 +6718,13 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         this.setupRepoMode = mode;
         this.setupMessage = "";
         this.setupFailure = false;
-        this.display();
+        this.renderSettings();
       });
     }
     const card = body.createDiv({ cls: "zoey-sync-setup-detail" });
     if (this.setupRepoMode === "existing") {
-      card.createEl("h4", { text: "\u6838\u9A8C\u5DF2\u6709 GitHub \u4ED3\u5E93" });
-      card.createEl("p", { text: "\u5728\u5DF2\u6709 GitHub \u4ED3\u5E93\u9875\u9762\u70B9\u51FB\u300CCode\u300D\uFF0C\u590D\u5236 HTTPS \u5730\u5740\u5E76\u586B\u5165\u4E0B\u65B9\u3002" });
+      new import_obsidian5.Setting(card).setName("\u6838\u9A8C\u5DF2\u6709 GitHub \u4ED3\u5E93").setHeading();
+      card.createEl("p", { text: "\u5728\u5DF2\u6709 GitHub \u4ED3\u5E93\u9875\u9762\u70B9\u51FB\u300Ccode\u300D\uFF0C\u590D\u5236 HTTPS \u5730\u5740\u5E76\u586B\u5165\u4E0B\u65B9\u3002" });
       card.createEl("p", { text: "\u6838\u9A8C\u4F1A\u68C0\u67E5\u4ED3\u5E93\u662F\u5426\u4E3A\u79C1\u6709\uFF0C\u4EE5\u53CA\u5F53\u524D\u767B\u5F55\u8D26\u53F7\u662F\u5426\u5177\u6709\u5199\u5165\u6743\u9650\u3002", cls: "zoey-sync-setup-helper" });
       const repoUrlSetting = new import_obsidian5.Setting(card).setName("GitHub \u4ED3\u5E93\u5730\u5740").addText((text) => text.setPlaceholder("https://github.com/user/vault.git").setValue(this.setupRepoInput).onChange((value) => {
         this.setupRepoInput = value.trim();
@@ -6674,9 +6736,9 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
       }, "", false))).settingEl.addClass("zoey-sync-setup-action", "zoey-sync-setup-check-action", "zoey-sync-setup-auth-submit");
     } else {
       const heading = card.createDiv({ cls: "zoey-sync-setup-section-header" });
-      heading.createEl("h4", { text: "\u521B\u5EFA GitHub \u65B0\u4ED3\u5E93" });
-      card.createEl("p", { text: "\u586B\u5199\u4ED3\u5E93\u540D\u79F0\u540E\uFF0C\u63D2\u4EF6\u4F1A\u5728\u5F53\u524D GitHub \u8D26\u53F7\u4E0B\u521B\u5EFA\u4E00\u4E2A\u7A7A\u7684 Private\uFF08\u79C1\u4EBA\uFF09\u4ED3\u5E93\u3002\u6B64\u65F6\u4E0D\u4F1A\u63A8\u9001\u672C\u5730\u6587\u4EF6\u3002" });
-      new import_obsidian5.Setting(card).setName("\u65B0\u4ED3\u5E93\u540D\u79F0").addText((text) => text.setPlaceholder("\u4F8B\u5982 my-obsidian-vault").setValue(this.setupRepoNameInput).onChange((value) => {
+      new import_obsidian5.Setting(heading).setName("\u521B\u5EFA GitHub \u65B0\u4ED3\u5E93").setHeading();
+      card.createEl("p", { text: "\u586B\u5199\u4ED3\u5E93\u540D\u79F0\u540E\uFF0C\u63D2\u4EF6\u4F1A\u5728\u5F53\u524D GitHub \u8D26\u53F7\u4E0B\u521B\u5EFA\u4E00\u4E2A\u7A7A\u7684 private\uFF08\u79C1\u4EBA\uFF09\u4ED3\u5E93\u3002\u6B64\u65F6\u4E0D\u4F1A\u63A8\u9001\u672C\u5730\u6587\u4EF6\u3002" });
+      new import_obsidian5.Setting(card).setName("\u65B0\u4ED3\u5E93\u540D\u79F0").addText((text) => text.setPlaceholder("\u4F8B\u5982 my-Obsidian-vault").setValue(this.setupRepoNameInput).onChange((value) => {
         this.setupRepoNameInput = value.trim();
       })).settingEl.addClass("zoey-sync-setup-repo-name");
       new import_obsidian5.Setting(card).addButton((button) => button.setButtonText("\u521B\u5EFA\u79C1\u4EBA\u4ED3\u5E93").setCta().setDisabled(this.setupBusy).onClick(() => void this.runSetup(async () => {
@@ -6759,7 +6821,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
       if (preview.alreadyLinked) body.createEl("p", { text: "\u672C\u673A\u5DF2\u5305\u542B GitHub \u7684\u63D0\u4EA4\u8BB0\u5F55\uFF0C\u53EF\u4EE5\u7EE7\u7EED\u6838\u5BF9\u6587\u4EF6\u3002", cls: "zoey-sync-setup-done" });
       else if (preview.relatedHistory) body.createEl("p", { text: "\u4E24\u7AEF\u6709\u5171\u540C\u5386\u53F2\uFF1B\u5B8C\u6210\u63A5\u5165\u65F6\u4F1A\u5408\u5E76 GitHub \u7684\u65B0\u63D0\u4EA4\uFF0C\u51B2\u7A81\u4F1A\u505C\u4E0B\u7B49\u5F85\u5904\u7406\u3002", cls: "zoey-sync-section-desc" });
       body.createEl("p", { text: preview.localRoot ? `\u672C\u673A\u5206\u652F\uFF1A${preview.localBranch} \xB7 GitHub \u5206\u652F\uFF1A${preview.branch}` : `\u5F53\u524D Vault \u8FD8\u6CA1\u6709 Git \u4ED3\u5E93\uFF1B\u5B8C\u6210\u63A5\u5165\u65F6\u4F1A\u521B\u5EFA ${preview.branch} \u5206\u652F\u3002`, cls: "zoey-sync-section-desc" });
-      body.createEl("h4", { text: "Git \u5FFD\u7565\u89C4\u5219", cls: "zoey-sync-subsection-title" });
+      new import_obsidian5.Setting(body).setName("Git \u5FFD\u7565\u89C4\u5219").setHeading();
       const ignoreDiffers = setupIgnoreDiffers(preview);
       const ignoreChoice = this.plugin.getSetupChoices()[".gitignore"];
       if (ignoreDiffers) {
@@ -6778,9 +6840,9 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         }
         const comparison = body.createEl("details", { cls: "zoey-sync-setup-files" });
         comparison.createEl("summary", { text: "\u67E5\u770B\u4E24\u7AEF .gitignore \u8BE6\u60C5" });
-        comparison.createEl("h4", { text: "\u672C\u673A" });
+        new import_obsidian5.Setting(comparison).setName("\u672C\u673A").setHeading();
         comparison.createEl("pre", { text: preview.localIgnore || "\uFF08\u7A7A\uFF09" });
-        comparison.createEl("h4", { text: "\u8FDC\u7AEF" });
+        new import_obsidian5.Setting(comparison).setName("\u8FDC\u7AEF").setHeading();
         comparison.createEl("pre", { text: preview.remoteIgnore || "\uFF08\u7A7A\uFF09" });
       }
       if (ignoreDiffers && !ignoreChoice) body.createEl("p", { text: "\u4EE5\u4E0B\u4E3A\u672C\u673A\u57FA\u51C6\u7684\u9884\u89C8\uFF1B\u8BF7\u9009\u62E9\u57FA\u51C6\u540E\u786E\u8BA4\u91CD\u5EFA\u3002", cls: "zoey-sync-section-desc" });
@@ -6804,7 +6866,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         if (!this.plugin.settings.setupComplete && (preview.trackedExcludedLocal.length || preview.trackedExcludedRemote.length)) {
           const trackingSetting = new import_obsidian5.Setting(body).setName("\u91CD\u5EFA\u5DF2\u6709\u6587\u4EF6\u7684\u8FFD\u8E2A").setDesc("\u6309\u4F18\u5316\u540E\u7684\u89C4\u5219\u91CD\u5EFA Git \u8FFD\u8E2A\u3002\u672C\u673A\u6587\u4EF6\u4FDD\u7559\uFF1B\u6B64\u64CD\u4F5C\u63D0\u4EA4\u5E76\u63A8\u9001\u540E\uFF0C\u4F1A\u6539\u53D8\u8FDC\u7AEF\u7684\u6587\u4EF6\u8FFD\u8E2A\u3002").addButton((button) => button.setButtonText("\u6839\u636E\u5EFA\u8BAE\u91CD\u5EFA Git \u8FFD\u8E2A").setDisabled(ignoreDiffers && !ignoreChoice).onClick(() => {
             this.setupTrackingPending = true;
-            this.display();
+            this.renderSettings();
           }));
           trackingSetting.settingEl.addClass("zoey-sync-setup-tracking-setting");
           if (this.setupTrackingPending) {
@@ -6812,8 +6874,8 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
             detail.createEl("summary", { text: "\u5C55\u5F00\u67E5\u770B\u91CD\u5EFA\u8BE6\u60C5" });
             detail.createEl("p", { text: "\u8FD9\u91CC\u786E\u8BA4\u91CD\u5EFA\u8BA1\u5212\uFF1B\u5B9E\u9645\u91CD\u5EFA\u5728\u5B8C\u6210\u63A5\u5165\u65F6\u6267\u884C\u3002\u53D6\u6D88\u5219\u4FDD\u7559\u73B0\u6709\u8FFD\u8E2A\u3002" });
             detail.createEl("p", { text: "\u5EFA\u8BAE\u89C4\u5219\u6309\u7528\u9014\u5F52\u7C7B\u3002\u9644\u4EF6\u3001\u4E2A\u4EBA\u76EE\u5F55\u53CA\u539F\u6709\u4F8B\u5916\u89C4\u5219\u4E0D\u4F1A\u65B0\u589E\u4E3A\u901A\u7528\u5EFA\u8BAE\uFF1B\u5B8C\u6574\u89C4\u5219\u4FDD\u7559\u539F\u6709\u987A\u5E8F\u3002" });
-            for (const group of setupIgnoreRuleGroups(preview)) {
-              detail.createEl("h4", { text: group.title });
+            for (const group of setupIgnoreRuleGroups(preview, this.plugin.app.vault.configDir)) {
+              new import_obsidian5.Setting(detail).setName("").setHeading();
               detail.createEl("pre", { text: [...new Set(group.rules)].join("\n") });
             }
             const original = detail.createEl("details", { cls: "zoey-sync-setup-files" });
@@ -6840,7 +6902,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
           });
         }
       }
-      body.createEl("h4", { text: "\u6587\u4EF6\u5DEE\u5F02", cls: "zoey-sync-subsection-title" });
+      new import_obsidian5.Setting(body).setName("\u6587\u4EF6\u5DEE\u5F02").setHeading();
       this.setupFileList(body, "\u4EC5\u672C\u5730\u6587\u4EF6", preview.localOnly);
       this.setupFileList(body, "\u4EC5\u8FDC\u7AEF\u6587\u4EF6", preview.remoteOnly);
       if (this.plugin.settings.setupComplete) this.setupFileList(body, "\u540C\u540D\u6587\u4EF6", preview.overlaps);
@@ -6876,7 +6938,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     if (paths.length === 0) return;
     const details = body.createEl("details", { cls: "zoey-sync-setup-files" });
     details.createEl("summary", { text: `${title}\uFF08${paths.length}\uFF09` });
-    for (const path2 of paths.slice(0, 200)) details.createEl("div", { text: path2 });
+    for (const path2 of paths.slice(0, 200)) details.createDiv({ text: path2 });
     if (paths.length > 200) details.createEl("p", { text: `\u8FD8\u6709 ${paths.length - 200} \u4E2A\u6587\u4EF6\u672A\u5728\u8FD9\u91CC\u5C55\u5F00\u3002` });
   }
   displaySetupFinish(body) {
@@ -6939,16 +7001,17 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     const preview = this.currentDevice() !== "git";
     containerEl.createEl("p", { text: "\u901A\u5E38\u4E0D\u9700\u8981\u4FEE\u6539", cls: "zoey-sync-advanced-intro" });
     const advancedBody = containerEl.createDiv({ cls: "zoey-sync-card zoey-sync-advanced__body" });
-    advancedBody.createEl("h4", { text: "\u754C\u9762\u8BBE\u7F6E", cls: "zoey-sync-subsection-title" });
-    const versionViewSetting = new import_obsidian5.Setting(advancedBody).setName("\u663E\u793A\u5F85 Commit \u5217\u8868").setDesc("\u5728\u540C\u6B65\u6309\u94AE\u65C1\u663E\u793A\u5F85\u4E0A\u4F20\u548C\u5F85 Commit \u5207\u6362\u3002\u5173\u95ED\u65F6\u53EA\u663E\u793A\u5F85\u4E0A\u4F20\u6587\u4EF6\u3002");
+    new import_obsidian5.Setting(advancedBody).setName("\u754C\u9762\u8BBE\u7F6E").setHeading();
+    const versionViewSetting = new import_obsidian5.Setting(advancedBody).setName("\u663E\u793A\u5F85 commit \u5217\u8868").setDesc("\u5728\u540C\u6B65\u6309\u94AE\u65C1\u663E\u793A\u5F85\u4E0A\u4F20\u548C\u5F85 commit \u5207\u6362\u3002\u5173\u95ED\u65F6\u53EA\u663E\u793A\u5F85\u4E0A\u4F20\u6587\u4EF6\u3002");
     const versionViewIcon = versionViewSetting.nameEl.createSpan({ cls: "zoey-sync-setting-mode-icon" });
-    versionViewIcon.innerHTML = '<svg viewBox="0 0 32 18" aria-hidden="true"><g><circle cx="7.5" cy="9" r="5.25"/><path d="m4.9 9.1 1.7 1.7 3.5-3.8"/></g><path class="mode-divider" d="M16 3.25v11.5"/><g><path d="M23.75 11.75v-7.5"/><path d="m20.75 7.25 3-3 3 3"/><path d="M19.25 12.75v1.5h9v-1.5"/></g></svg>';
+    (0, import_obsidian5.addIcon)("simple-link-mode-setting", '<svg viewBox="0 0 32 18" aria-hidden="true"><g><circle cx="7.5" cy="9" r="5.25"/><path d="m4.9 9.1 1.7 1.7 3.5-3.8"/></g><path class="mode-divider" d="M16 3.25v11.5"/><g><path d="M23.75 11.75v-7.5"/><path d="m20.75 7.25 3-3 3 3"/><path d="M19.25 12.75v1.5h9v-1.5"/></g></svg>');
+    (0, import_obsidian5.setIcon)(versionViewIcon, "simple-link-mode-setting");
     versionViewSetting.nameEl.prepend(versionViewIcon);
     versionViewSetting.addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.showVersionViewSwitcher).onChange((value) => void this.plugin.setVersionViewSwitcher(value))
     );
-    advancedBody.createEl("h4", { text: "\u6587\u4EF6\u8FFD\u8E2A", cls: "zoey-sync-subsection-title" });
-    new import_obsidian5.Setting(advancedBody).setName("\u6309\u5FFD\u7565\u89C4\u5219\u4FEE\u590D\u8FFD\u8E2A").setDesc("\u5148\u68C0\u67E5 .gitignore \u548C\u5DF2\u8FFD\u8E2A\u6587\u4EF6\uFF0C\u518D\u53EA\u8BA9\u5E94\u5FFD\u7565\u7684\u6587\u4EF6\u9000\u51FA Git \u8DDF\u8E2A\u3002\u672C\u673A\u6587\u4EF6\u4FDD\u7559\uFF1B\u4E0D\u4F1A\u7ACB\u5373 Commit \u6216 Push\u3002\u82E5\u6709\u672A\u89E3\u51B3\u7684\u5408\u5E76\u51B2\u7A81\uFF0C\u8BF7\u5148\u5904\u7406\u3002").addButton((button) => button.setButtonText("\u68C0\u67E5\u5E76\u4FEE\u590D\u6587\u4EF6\u8FFD\u8E2A").setDisabled(preview).onClick(async () => {
+    new import_obsidian5.Setting(advancedBody).setName("\u6587\u4EF6\u8FFD\u8E2A").setHeading();
+    new import_obsidian5.Setting(advancedBody).setName("\u6309\u5FFD\u7565\u89C4\u5219\u4FEE\u590D\u8FFD\u8E2A").setDesc("\u5148\u68C0\u67E5 .gitignore \u548C\u5DF2\u8FFD\u8E2A\u6587\u4EF6\uFF0C\u518D\u53EA\u8BA9\u5E94\u5FFD\u7565\u7684\u6587\u4EF6\u9000\u51FA Git \u8DDF\u8E2A\u3002\u672C\u673A\u6587\u4EF6\u4FDD\u7559\uFF1B\u4E0D\u4F1A\u7ACB\u5373 commit \u6216 push\u3002\u82E5\u6709\u672A\u89E3\u51B3\u7684\u5408\u5E76\u51B2\u7A81\uFF0C\u8BF7\u5148\u5904\u7406\u3002").addButton((button) => button.setButtonText("\u68C0\u67E5\u5E76\u4FEE\u590D\u6587\u4EF6\u8FFD\u8E2A").setDisabled(preview).onClick(async () => {
       button.setDisabled(true);
       button.setButtonText("\u6B63\u5728\u68C0\u67E5\u2026");
       try {
@@ -6961,8 +7024,8 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         button.setButtonText("\u68C0\u67E5\u5E76\u4FEE\u590D\u6587\u4EF6\u8FFD\u8E2A");
       }
     }));
-    advancedBody.createEl("h4", { text: "\u540C\u6B65\u65F6\u95F4\u8BBE\u7F6E", cls: "zoey-sync-subsection-title" });
-    new import_obsidian5.Setting(advancedBody).setName("\u7A7A\u95F2\u540E\u6C47\u603B\u53D8\u5316\u6587\u4EF6\u5217\u8868\uFF08\u79D2\uFF09").setDesc("\u6301\u7EED\u591A\u4E45\u6CA1\u6709\u6587\u4EF6\u53D8\u5316\u540E\u6C47\u603B\u6240\u6709\u53D8\u5316\u6587\u4EF6\uFF0C\u751F\u6210\u5F85 Commit\uFF0F\u4E0A\u4F20\u5217\u8868\u3002").addText((text) => {
+    new import_obsidian5.Setting(advancedBody).setName("\u540C\u6B65\u65F6\u95F4\u8BBE\u7F6E").setHeading();
+    new import_obsidian5.Setting(advancedBody).setName("\u7A7A\u95F2\u540E\u6C47\u603B\u53D8\u5316\u6587\u4EF6\u5217\u8868\uFF08\u79D2\uFF09").setDesc("\u6301\u7EED\u591A\u4E45\u6CA1\u6709\u6587\u4EF6\u53D8\u5316\u540E\u6C47\u603B\u6240\u6709\u53D8\u5316\u6587\u4EF6\uFF0C\u751F\u6210\u5F85 commit\uFF0F\u4E0A\u4F20\u5217\u8868\u3002").addText((text) => {
       text.inputEl.type = "number";
       text.inputEl.min = "0.5";
       text.inputEl.step = "0.5";
@@ -6971,18 +7034,18 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         await this.plugin.saveSettings();
       });
     });
-    new import_obsidian5.Setting(advancedBody).setName("\u7A7A\u95F2\u540E\u81EA\u52A8 Commit\uFF08\u5206\u949F\uFF09").setDesc("\u6301\u7EED\u591A\u4E45\u6CA1\u6709\u6587\u4EF6\u53D8\u5316\u540E\u521B\u5EFA Commit\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "autoCommitIdleMinutes", 5));
-    new import_obsidian5.Setting(advancedBody).setName("\u7A7A\u95F2\u540E\u81EA\u52A8 Push\uFF08\u5206\u949F\uFF09").setDesc("\u6709\u5F85\u4E0A\u4F20 Commit \u65F6\uFF0C\u6301\u7EED\u591A\u4E45\u6CA1\u6709\u6587\u4EF6\u53D8\u5316\u540E Fetch\u3001\u6309\u9700 Merge \u5E76 Push\uFF1B\u4E0D\u4F1A\u63D0\u524D\u81EA\u52A8 Commit\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "autoPushIdleMinutes", 30));
-    new import_obsidian5.Setting(advancedBody).setName("\u5F3A\u5236 Commit \u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u4ECE\u9996\u6B21\u68C0\u6D4B\u5230\u672A\u63D0\u4EA4\u6539\u52A8\u8D77\uFF0C\u5230\u70B9\u5373 Commit \u5F53\u524D\u6240\u6709\u672C\u673A\u6539\u52A8\uFF0C\u4E0D\u518D\u7B49\u5F85\u7A7A\u95F2\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "maxUncommittedMinutes", 30));
-    new import_obsidian5.Setting(advancedBody).setName("\u5F3A\u5236 Push \u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u6700\u65E9\u7684\u5F85\u4E0A\u4F20 Commit \u5230\u70B9\u540E\uFF0C\u5148\u5F3A\u5236 Commit \u5F53\u524D\u672C\u673A\u66F4\u6539\uFF08\u5305\u62EC\u6B63\u5728\u7F16\u8F91\u7684\u6587\u4EF6\uFF09\uFF0C\u518D Fetch\u3001\u6309\u9700 Merge \u5E76 Push\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "maxUnpushedMinutes", 60));
-    new import_obsidian5.Setting(advancedBody).setName("\u542F\u52A8\u540E\u81EA\u52A8 Commit\u3001Fetch \u5E76 Merge").setDesc("\u542F\u52A8\u540E\u5148 Commit \u5F53\u524D\u672C\u673A\u6539\u52A8\uFF0C\u518D\u83B7\u53D6\u4E91\u7AEF\u6700\u65B0\u63D0\u4EA4\u5E76\u5408\u5E76\u5230\u672C\u673A\uFF1B\u4E0D\u4F1A\u7ACB\u5373 Push\u3002").addToggle(
+    new import_obsidian5.Setting(advancedBody).setName("\u7A7A\u95F2\u540E\u81EA\u52A8 commit\uFF08\u5206\u949F\uFF09").setDesc("\u6301\u7EED\u591A\u4E45\u6CA1\u6709\u6587\u4EF6\u53D8\u5316\u540E\u521B\u5EFA commit\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "autoCommitIdleMinutes", 5));
+    new import_obsidian5.Setting(advancedBody).setName("\u7A7A\u95F2\u540E\u81EA\u52A8 push\uFF08\u5206\u949F\uFF09").setDesc("\u6709\u5F85\u4E0A\u4F20 commit \u65F6\uFF0C\u6301\u7EED\u591A\u4E45\u6CA1\u6709\u6587\u4EF6\u53D8\u5316\u540E fetch\u3001\u6309\u9700 merge \u5E76 push\uFF1B\u4E0D\u4F1A\u63D0\u524D\u81EA\u52A8 commit\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "autoPushIdleMinutes", 30));
+    new import_obsidian5.Setting(advancedBody).setName("\u5F3A\u5236 commit \u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u4ECE\u9996\u6B21\u68C0\u6D4B\u5230\u672A\u63D0\u4EA4\u6539\u52A8\u8D77\uFF0C\u5230\u70B9\u5373 commit \u5F53\u524D\u6240\u6709\u672C\u673A\u6539\u52A8\uFF0C\u4E0D\u518D\u7B49\u5F85\u7A7A\u95F2\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "maxUncommittedMinutes", 30));
+    new import_obsidian5.Setting(advancedBody).setName("\u5F3A\u5236 push \u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u6700\u65E9\u7684\u5F85\u4E0A\u4F20 commit \u5230\u70B9\u540E\uFF0C\u5148\u5F3A\u5236 commit \u5F53\u524D\u672C\u673A\u66F4\u6539\uFF08\u5305\u62EC\u6B63\u5728\u7F16\u8F91\u7684\u6587\u4EF6\uFF09\uFF0C\u518D fetch\u3001\u6309\u9700 merge \u5E76 push\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "maxUnpushedMinutes", 60));
+    new import_obsidian5.Setting(advancedBody).setName("\u542F\u52A8\u540E\u81EA\u52A8 commit\u3001fetch \u5E76 merge").setDesc("\u542F\u52A8\u540E\u5148 commit \u5F53\u524D\u672C\u673A\u6539\u52A8\uFF0C\u518D\u83B7\u53D6\u4E91\u7AEF\u6700\u65B0\u63D0\u4EA4\u5E76\u5408\u5E76\u5230\u672C\u673A\uFF1B\u4E0D\u4F1A\u7ACB\u5373 push\u3002").addToggle(
       (toggle) => toggle.setValue(this.plugin.settings.pullOnStartup).onChange(async (value) => {
         this.plugin.settings.pullOnStartup = value;
         await this.plugin.saveSettings();
       })
     );
-    new import_obsidian5.Setting(advancedBody).setName("\u81EA\u52A8 Fetch \u4E0E Merge \u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u6309\u6B64\u65F6\u95F4\u95F4\u9694\u83B7\u53D6\u4E91\u7AEF\u6700\u65B0\u63D0\u4EA4\u5E76\u5408\u5E76\u5230\u672C\u673A\uFF1B\u4E0D\u4F1A\u6267\u884C Push\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "autoPullIntervalMinutes", 5));
-    advancedBody.createEl("h4", { text: "Git \u8BBE\u7F6E", cls: "zoey-sync-subsection-title" });
+    new import_obsidian5.Setting(advancedBody).setName("\u81EA\u52A8 fetch \u4E0E merge \u95F4\u9694\uFF08\u5206\u949F\uFF09").setDesc("\u6309\u6B64\u65F6\u95F4\u95F4\u9694\u83B7\u53D6\u4E91\u7AEF\u6700\u65B0\u63D0\u4EA4\u5E76\u5408\u5E76\u5230\u672C\u673A\uFF1B\u4E0D\u4F1A\u6267\u884C push\u3002\u8BBE\u4E3A 0 \u53EF\u5173\u95ED\u3002").addText((text) => this.addTimingInput(text, "autoPullIntervalMinutes", 5));
+    new import_obsidian5.Setting(advancedBody).setName("Git \u8BBE\u7F6E").setHeading();
     new import_obsidian5.Setting(advancedBody).setName("\u5206\u652F").setDesc("\u9ED8\u8BA4\u4F7F\u7528 master\uFF1B\u53EA\u6709\u4ED3\u5E93\u4F7F\u7528\u5176\u4ED6\u5206\u652F\u65F6\u624D\u9700\u8981\u4FEE\u6539\u3002").addText(
       (text) => text.setValue(this.plugin.settings.gitBranch).onChange(async (value) => {
         this.plugin.settings.gitBranch = value.trim() || "master";
@@ -7001,15 +7064,15 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         await this.plugin.saveSettings();
       })
     );
-    advancedBody.createEl("h4", { text: "\u6545\u969C\u6392\u67E5", cls: "zoey-sync-subsection-title" });
-    new import_obsidian5.Setting(advancedBody).setName("\u5F02\u5E38\u4FEE\u590D").setDesc("\u6062\u590D\u672A\u5B8C\u6210\u7684 Rebase\u3001Merge \u7B49 Git \u64CD\u4F5C\uFF0C\u4EE5\u5F53\u524D\u672C\u673A\u5185\u5BB9\u91CD\u65B0 Commit\uFF0C\u518D Fetch \u5E76 Merge\uFF1B\u4E0D\u4F1A\u7ACB\u5373 Push\u3002").addButton(
+    new import_obsidian5.Setting(advancedBody).setName("\u6545\u969C\u6392\u67E5").setHeading();
+    new import_obsidian5.Setting(advancedBody).setName("\u5F02\u5E38\u4FEE\u590D").setDesc("\u6062\u590D\u672A\u5B8C\u6210\u7684 rebase\u3001merge \u7B49 Git \u64CD\u4F5C\uFF0C\u4EE5\u5F53\u524D\u672C\u673A\u5185\u5BB9\u91CD\u65B0 commit\uFF0C\u518D fetch \u5E76 merge\uFF1B\u4E0D\u4F1A\u7ACB\u5373 push\u3002").addButton(
       (button) => button.setButtonText("\u6062\u590D\u6B63\u5E38\u540C\u6B65").setDisabled(preview).onClick(async () => {
         button.setDisabled(true);
         button.setButtonText("\u6B63\u5728\u68C0\u67E5\u2026");
         try {
           const operation = await this.plugin.getInterruptedGitOperationLabel();
           if (!operation) {
-            new import_obsidian5.Notice("Simple Link\uFF1A\u6CA1\u6709\u68C0\u6D4B\u5230\u672A\u5B8C\u6210\u7684 Rebase\u3001Merge\u3001Cherry-pick \u6216 Revert");
+            new import_obsidian5.Notice("Simple Link\uFF1A\u6CA1\u6709\u68C0\u6D4B\u5230\u672A\u5B8C\u6210\u7684 rebase\u3001merge\u3001cherry-pick \u6216 revert");
             return;
           }
           new GitRepairModal(this.app, this.plugin, operation).open();
@@ -7021,7 +7084,7 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
         }
       })
     );
-    new import_obsidian5.Setting(advancedBody).setName("\u672C\u5730 Git \u5386\u53F2\u7626\u8EAB").setDesc("\u9ED8\u8BA4\u4FDD\u7559\u6700\u8FD1 30 \u5929\u7684\u672C\u5730\u5386\u53F2\u3002\u5148\u8054\u7F51\u786E\u8BA4\u5F53\u524D Commit \u5DF2\u4E0A\u4F20\uFF0C\u518D\u6E05\u7406\u672C\u673A\u65E7\u5386\u53F2\uFF1B\u4E0D\u4F1A\u5220\u9664 GitHub \u4E0A\u7684\u7248\u672C\u3002").addButton(
+    new import_obsidian5.Setting(advancedBody).setName("\u672C\u5730 Git \u5386\u53F2\u7626\u8EAB").setDesc("\u9ED8\u8BA4\u4FDD\u7559\u6700\u8FD1 30 \u5929\u7684\u672C\u5730\u5386\u53F2\u3002\u5148\u8054\u7F51\u786E\u8BA4\u5F53\u524D commit \u5DF2\u4E0A\u4F20\uFF0C\u518D\u6E05\u7406\u672C\u673A\u65E7\u5386\u53F2\uFF1B\u4E0D\u4F1A\u5220\u9664 GitHub \u4E0A\u7684\u7248\u672C\u3002").addButton(
       (button) => button.setButtonText("\u68C0\u67E5\u5E76\u9884\u89C8").setDisabled(preview).onClick(async () => {
         button.setDisabled(true);
         button.setButtonText("\u6B63\u5728\u6838\u9A8C\u2026");
@@ -7055,3 +7118,8 @@ var ZoeySyncSettingTab = class extends import_obsidian5.PluginSettingTab {
     });
   }
 };
+function asyncAction(action) {
+  return () => {
+    void action().catch((error) => new import_obsidian5.Notice(messageOf2(error), 8e3));
+  };
+}

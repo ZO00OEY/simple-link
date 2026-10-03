@@ -1,5 +1,5 @@
 import { DataAdapter } from "obsidian";
-import { DEFAULT_SYNC_IGNORE_PATTERNS, shouldIgnore } from "./dirty";
+import { defaultSyncIgnorePatterns, shouldIgnore } from "./dirty";
 
 export interface MobileOptions {
   mode: "github" | "server";
@@ -77,7 +77,7 @@ export function newLocalState(binding = ""): LocalState {
 }
 
 export function safePath(path: string): string {
-  if (!path || path.startsWith("/") || path.includes("\\") || /[\x00-\x1f]/.test(path) ||
+  if (!path || path.startsWith("/") || path.includes("\\") || [...path].some(character => character.charCodeAt(0) < 32) ||
       path.split("/").some((part) => !part || part === "." || part === "..")) {
     throw new Error("仓库中存在无法安全写入的路径，已停止同步。");
   }
@@ -87,7 +87,7 @@ export function safePath(path: string): string {
 export const IMAGE_EXTENSIONS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "tif", "tiff", "avif", "heic", "heif", "apng"];
 
 export function mobileIgnores(options: MobileOptions, configDir: string, pluginId: string): string[] {
-  const generated = [...DEFAULT_SYNC_IGNORE_PATTERNS, ...options.ignorePatterns];
+  const generated = [...defaultSyncIgnorePatterns(configDir), ...options.ignorePatterns];
   if (!options.syncImages) generated.push(...IMAGE_EXTENSIONS.map((ext) => `*.${ext}`));
   if (!options.syncPlugins) generated.push(`${configDir}/plugins/`);
   // The generated list is informational; hard exclusions below cannot be negated.
@@ -120,7 +120,7 @@ export function included(path: string, options: MobileOptions, configDir: string
   }
   else if (path === configDir || path.startsWith(`${configDir}/`)) return false;
   if (!options.syncImages && IMAGE_EXTENSIONS.includes(path.split(".").pop()!.toLowerCase())) return false;
-  return !shouldIgnore(path, [...DEFAULT_SYNC_IGNORE_PATTERNS, ...options.ignorePatterns]);
+  return !shouldIgnore(path, [...defaultSyncIgnorePatterns(configDir), ...options.ignorePatterns], configDir);
 }
 
 export async function blobSha(bytes: Uint8Array): Promise<string> {
@@ -188,8 +188,7 @@ export async function scanCurrent(
     const before = await adapter.stat(path);
     if (!before || before.type !== "file") throw new Error("扫描期间文件发生变化，请重试。");
     const cached = state.cache[path];
-    const now = Date.now();
-    const recentlyWritten = !!cached && Math.max(before.mtime, cached.mtime) >= cached.verifiedAt - 2000;
+      const recentlyWritten = !!cached && Math.max(before.mtime, cached.mtime) >= cached.verifiedAt - 2000;
     if (!force && options.cacheEnabled && cached?.hashVersion === SYNC_HASH_VERSION && !state.dirty[path] && !recentlyWritten &&
         before.mtime === cached.mtime && before.ctime === cached.ctime && before.size === cached.size) {
       cached.mode = state.base[path]?.mode ?? cached.mode;

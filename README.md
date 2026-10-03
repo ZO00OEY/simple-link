@@ -12,7 +12,7 @@ Once the directory review is complete, open **Settings → Community plugins →
 
 ### Manual installation
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the same stable [GitHub release](https://github.com/ZO00OEY/simple-link/releases/latest).
+1. Download `main.js`, `manifest.json`, and `styles.css` from the same stable [GitHub release](https://github.com/ZO00OEY/simple-one-sync/releases/latest).
 2. Create a `plugins/simple-link` folder inside your vault's configuration directory (`.obsidian` by default, or the custom directory you configured).
 3. Copy the three release files into that folder. Keep existing configuration and sync state files when upgrading.
 4. Reload Obsidian and enable **Simple Link** in **Settings → Community plugins**. If you disabled community plugins, enable them first.

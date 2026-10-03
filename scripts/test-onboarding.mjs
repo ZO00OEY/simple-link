@@ -17,7 +17,12 @@ try {
   const bundle = join(folder, "onboarding.cjs");
   await esbuild.build({ entryPoints: ["src/onboarding.ts"], bundle: true, platform: "node", format: "cjs", outfile: bundle });
   globalThis.require = require;
-  const { GitSetup, parseGithubRepoUrl, explainSetupError, missingSetupIgnoreRules, applySetupIgnoreBase } = require(bundle);
+  globalThis.window = globalThis;
+  const onboarding = require(bundle);
+  const { parseGithubRepoUrl, explainSetupError } = onboarding;
+  class GitSetup extends onboarding.GitSetup { constructor(path, run, configDir = ".obsidian") { super(path, run, configDir); } }
+  const missingSetupIgnoreRules = (existing) => onboarding.missingSetupIgnoreRules(existing, ".obsidian");
+  const applySetupIgnoreBase = (preview, choice) => onboarding.applySetupIgnoreBase(preview, choice, ".obsidian");
   assert.equal(parseGithubRepoUrl("https://github.com/example/vault.git").name, "vault");
   assert.throws(() => parseGithubRepoUrl("https://gitee.com/example/vault"));
   assert.match(explainSetupError(new Error("repository not found")), /地址错误|无权访问/);
@@ -263,7 +268,9 @@ try {
 
   const nestedBundle = join(folder, "nested.cjs");
   await esbuild.build({ entryPoints: ["src/nestedRepos.ts"], bundle: true, platform: "node", format: "cjs", outfile: nestedBundle });
-  const { findNestedRepos, rebuildNestedRepoTracking } = require(nestedBundle);
+  const nested = require(nestedBundle);
+  const findNestedRepos = path => nested.findNestedRepos(path, ".obsidian");
+  const rebuildNestedRepoTracking = (path, repos, git) => nested.rebuildNestedRepoTracking(path, repos, git, ".obsidian");
   const gitlinkVault = join(folder, "gitlink-vault");
   const gitlinkChild = join(gitlinkVault, "plugin");
   await mkdir(gitlinkChild, { recursive: true });

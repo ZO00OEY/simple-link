@@ -6,36 +6,51 @@ export interface DirtyEntry {
   fromPath?: string;
 }
 
-export const DEFAULT_SYNC_IGNORE_PATTERNS = [
+export function recommendedIgnoreRules(configDir: string): string[] {
+  return [
+  "# Git 元数据",
   ".git/",
   ".zoey-sync/",
-  ".obsidian/cache/",
-  ".obsidian/workspace.json",
-  ".obsidian/workspaces/",
-  ".obsidian/trash/",
-  ".obsidian/plugins/obsidian-git/data.json",
+  "# Obsidian 工作区、回收站与缓存",
+  `${configDir}/cache/`,
+  `${configDir}/workspace.json`,
+  `${configDir}/workspace-mobile.json`,
+  `${configDir}/workspaces/`,
+  `${configDir}/trash/`,
+  ".trash/",
+  "# 插件生成的本机状态与日志（同步设置保留）",
+  `${configDir}/plugins/zoey-sync-test/data.json`,
+  `${configDir}/plugins/simple-one-sync/data.json`,
+  `${configDir}/plugins/simple-sync/data.json`,
+  `${configDir}/plugins/obsidian-git/data.json`,
+  `${configDir}/plugins/recent-files-obsidian/data.json`,
+  `${configDir}/plugins/simple-link/data.json`,
+  `${configDir}/plugins/simple-link/link-state.json`,
+  `${configDir}/plugins/simple-link/link-state.json.recovery`,
+  `${configDir}/plugins/simple-link/mobile-ignore.json`,
+  "# AI 工具的本机临时产物与会话",
+  ".codex/output/",
+  ".codex/AGENTS.md",
+  ".claudian/sessions/",
+  ".smart-env/",
+  "# Obsidian Git 临时冲突清单",
+  "conflict-files-obsidian-git.md",
+  "# 系统文件",
   ".DS_Store",
   "Thumbs.db",
   "desktop.ini",
-  "*.bak",
+  "# 备份与临时文件",
   "*.tmp",
-  "conflict-files-obsidian-git.md",
-  ".smart-env/",
-  ".obsidian/plugins/recent-files-obsidian/data.json",
-  ".obsidian/workspace-mobile.json",
-  ".obsidian/plugins/zoey-sync-test/data.json",
-  ".obsidian/plugins/simple-one-sync/data.json",
-  ".obsidian/plugins/simple-sync/data.json",
-  ".obsidian/plugins/simple-link/data.json",
-  ".obsidian/plugins/simple-link/link-state.json",
-  ".obsidian/plugins/simple-link/link-state.json.recovery",
-  ".obsidian/plugins/simple-link/mobile-ignore.json",
-  "node_modules/",
-  ".trash/",
-  ".claudian/sessions/",
-  ".codex/AGENTS.md",
-  ".codex/output/"
-];
+  "*.bak",
+  "# 本机依赖",
+  "node_modules/"
+  ];
+}
+
+
+export function defaultSyncIgnorePatterns(configDir: string): string[] {
+  return recommendedIgnoreRules(configDir).filter(line => !line.startsWith("#"));
+}
 
 function globToRegex(pattern: string): string {
   let source = "";
@@ -73,10 +88,11 @@ function matchesIgnorePattern(path: string, rawPattern: string): boolean {
 
 export function shouldIgnore(
   path: string,
-  patterns: readonly string[] = DEFAULT_SYNC_IGNORE_PATTERNS
+  patterns: readonly string[],
+  configDir?: string
 ): boolean {
   const normalized = path.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
-  if (normalized === ".obsidian/plugins/simple-link/data.json") return true;
+  if (configDir && normalized === `${configDir}/plugins/simple-link/data.json`) return true;
   let ignored = false;
   for (const rawPattern of patterns) {
     const pattern = rawPattern.trim();

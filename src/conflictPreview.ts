@@ -125,11 +125,13 @@ export class ZoeySyncConflictPreviewModal extends Modal {
     this.active = true;
     this.modalEl.addClass("zoey-sync-preview-modal");
     this.modalEl.toggleClass("is-mobile-review-modal", this.compact());
+    this.modalEl.parentElement?.toggleClass("simple-link-mobile-review-container", this.compact());
     this.contentEl.toggleClass("is-mobile-review", this.compact());
     this.render(false);
   }
 
   onClose(): void {
+    this.modalEl.parentElement?.removeClass("simple-link-mobile-review-container");
     this.active = false;
     this.resolve?.(null); this.resolve = undefined;
     this.contentEl.empty();

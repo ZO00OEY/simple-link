@@ -14,11 +14,12 @@ import {
   setIcon,
   setTooltip,
   Setting,
+  SettingDefinitionItem,
   TAbstractFile,
   TFile,
   WorkspaceLeaf
 } from "obsidian";
-import { coalesceDirty, DEFAULT_SYNC_IGNORE_PATTERNS, DirtyEntry, shouldIgnore } from "./dirty";
+import { coalesceDirty, defaultSyncIgnorePatterns, DirtyEntry, shouldIgnore } from "./dirty";
 import {
   ChangeItem,
   findRemoteChangeOverlaps,
@@ -29,7 +30,7 @@ import { applyConflictResolutions, ConflictBlock, parseConflictBlocks } from "./
 import { describeGitError, isMissingRemoteRefError, isTransientGitNetworkError, isUncertainGitAuthError } from "./gitError";
 import { LiveReview, ZoeySyncConflictPreviewModal } from "./conflictPreview";
 import { SetupDifferencesModal } from "./setupDifferences";
-import { GitSetup, OverlapChoice, SetupOverlapContent, SetupPreview, VerifiedRepo, SETUP_GITIGNORE, missingSetupIgnoreRules, pathBatches, explainSetupError, parseGithubRepoUrl, applySetupIgnoreBase, setupIgnoreDiffers, setupIgnoreRuleGroups } from "./onboarding";
+import { GitSetup, OverlapChoice, SetupOverlapContent, SetupPreview, VerifiedRepo, setupGitIgnore, missingSetupIgnoreRules, pathBatches, explainSetupError, parseGithubRepoUrl, applySetupIgnoreBase, setupIgnoreDiffers, setupIgnoreRuleGroups } from "./onboarding";
 import { findNestedRepos, nestedGitIgnoreRules, nestedRepoFiles, rebuildNestedRepoTracking } from "./nestedRepos";
 
 import { DEFAULT_MOBILE_OPTIONS, MobileOptions, mobileIgnores, newPathRecords } from "./linkDiff";
@@ -180,7 +181,7 @@ const DEFAULT_SETTINGS: PluginSettings = {
   dirty: [],
   inFlight: [],
   pendingRequestId: "",
-  ignorePatterns: [...DEFAULT_SYNC_IGNORE_PATTERNS],
+  ignorePatterns: [],
   mobileAutoSyncMinutes: 10,
   commandPollSeconds: 60,
   gitRemoteUrl: "",
@@ -353,7 +354,7 @@ export default class ZoeySyncPlugin extends Plugin {
       if (!Platform.isMobile) {
         this.app.workspace.onLayoutReady(() => void this.openSyncView());
       }
-    } else if (this.statusEl) this.statusEl.style.display = "none";
+    } else if (this.statusEl) this.statusEl.addClass("simple-link-hidden");
   }
 
   onunload(): void {
@@ -521,7 +522,7 @@ export default class ZoeySyncPlugin extends Plugin {
   private activateFeature(): void {
     if (this.featureActive) return;
     this.featureActive = true;
-    if (this.statusEl) this.statusEl.style.display = "";
+    if (this.statusEl) this.statusEl.removeClass("simple-link-hidden");
     this.ribbonEl = this.addRibbonIcon("refresh-cw", "打开 Simple Link", () => void this.openSyncView());
     this.registerViewRefreshEvents();
     if (this.useLightweightSync()) {
@@ -548,7 +549,7 @@ export default class ZoeySyncPlugin extends Plugin {
     this.clearDesktopTimeouts();
     this.ribbonEl?.remove();
     this.ribbonEl = undefined;
-    if (this.statusEl) this.statusEl.style.display = "none";
+    if (this.statusEl) this.statusEl.addClass("simple-link-hidden");
     this.app.workspace.detachLeavesOfType(ZoeySyncView.type);
     this.app.workspace.detachLeavesOfType(ZoeySyncConflictView.type);
   }
@@ -682,7 +683,8 @@ export default class ZoeySyncPlugin extends Plugin {
     this.settings.inFlight = Array.isArray(this.settings.inFlight) ? this.settings.inFlight : [];
     this.settings.ignorePatterns = Array.isArray(this.settings.ignorePatterns)
       ? this.settings.ignorePatterns.filter((pattern): pattern is string => typeof pattern === "string")
-      : [...DEFAULT_SYNC_IGNORE_PATTERNS];
+      : defaultSyncIgnorePatterns(this.app.vault.configDir);
+    this.settings.ignorePatterns = [...new Set([...defaultSyncIgnorePatterns(this.app.vault.configDir), ...this.settings.ignorePatterns])];
     this.settings.errorLogs = Array.isArray(this.settings.errorLogs) ? this.settings.errorLogs : [];
     this.pruneErrorLogs();
     if (!this.settings.lastPullAt) {
@@ -817,7 +819,7 @@ export default class ZoeySyncPlugin extends Plugin {
   }
 
   private handleVaultChange(paths: string[]): void {
-    const relevantPaths = paths.filter((path) => !shouldIgnore(path, this.settings.ignorePatterns));
+    const relevantPaths = paths.filter((path) => !shouldIgnore(path, this.settings.ignorePatterns, this.app.vault.configDir));
     if (relevantPaths.length === 0) return;
     const now = Date.now();
     this.lastFileChangeAt = now;
@@ -1016,7 +1018,7 @@ export default class ZoeySyncPlugin extends Plugin {
 
   async inspectLocalHistory(retentionDays = 30): Promise<LocalHistoryPreview> {
     if (!this.settings.setupComplete) throw new Error("请先完成电脑端 Git 接入");
-    const nodeRequire = (globalThis as unknown as { require?: (name: string) => unknown }).require;
+    const nodeRequire = (window as unknown as { require?: (name: string) => unknown }).require;
     if (!nodeRequire) throw new Error("本地历史瘦身仅支持电脑端");
     const path = nodeRequire("path") as typeof import("path");
     const root = await this.git(["rev-parse", "--show-toplevel"]);
@@ -1353,7 +1355,7 @@ export default class ZoeySyncPlugin extends Plugin {
         const changes = this.getMobileGithub().cachedChanges(this.app.vault.getFiles().map(file => file.path));
         return changes.map((change) => ({ path: change.currentPath ?? change.basePath!,
           oldPath: change.status === "renamed" ? change.basePath! : undefined,
-          kind: change.status === "renamed" ? "moved" : change.status })) as ChangeItem[];
+          kind: change.status === "renamed" ? "moved" : change.status }));
       }
       return [...this.settings.inFlight, ...this.settings.dirty].map((entry) => ({
         path: entry.path,
@@ -1455,8 +1457,8 @@ export default class ZoeySyncPlugin extends Plugin {
   private async recordDirty(entry: DirtyEntry): Promise<void> {
     if (this.settings.mobile.mode === "github") return;
     if (
-      shouldIgnore(entry.path, this.settings.ignorePatterns) ||
-      (entry.fromPath && shouldIgnore(entry.fromPath, this.settings.ignorePatterns))
+      shouldIgnore(entry.path, this.settings.ignorePatterns, this.app.vault.configDir) ||
+      (entry.fromPath && shouldIgnore(entry.fromPath, this.settings.ignorePatterns, this.app.vault.configDir))
     ) return;
     if (this.suppressPaths.has(entry.path) || (entry.fromPath && this.suppressPaths.has(entry.fromPath))) return;
     this.settings.dirty = coalesceDirty(this.settings.dirty, entry);
@@ -1600,7 +1602,7 @@ export default class ZoeySyncPlugin extends Plugin {
       return;
     }
     if (!this.nativeGitEnabled()) {
-      if (showNotice) new Notice("当前模式不使用原生 Git Commit；请使用预览并同步");
+      if (showNotice) new Notice("当前模式不使用原生 Git commit；请使用预览并同步");
       return;
     }
     if (this.syncing) {
@@ -1776,7 +1778,7 @@ export default class ZoeySyncPlugin extends Plugin {
   setSetupChoice(path: string, choice: OverlapChoice): void {
     this.setupChoices[path] = choice;
     if (path === ".gitignore" && this.setupPreview) {
-      applySetupIgnoreBase(this.setupPreview, choice);
+      applySetupIgnoreBase(this.setupPreview, choice, this.app.vault.configDir);
       this.setupTrackingChoice = undefined;
     }
   }
@@ -1790,12 +1792,12 @@ export default class ZoeySyncPlugin extends Plugin {
 
   private setup(): GitSetup {
     return new GitSetup(this.vaultBasePath(), (program, args, timeoutMs, onOutput, stdinText, signal) =>
-      this.exec(program, args, program === "git" && (args[0] === "fetch" || args[0] === "push"), true, timeoutMs, onOutput, stdinText, signal));
+      this.exec(program, args, program === "git" && (args[0] === "fetch" || args[0] === "push"), true, timeoutMs, onOutput, stdinText, signal), this.app.vault.configDir);
   }
 
   async inspectFileTracking(): Promise<FileTrackingPreview> {
     if (Platform.isMobile || !this.settings.setupComplete) throw new Error("请先完成电脑端 Git 接入");
-    const nodeRequire = (globalThis as unknown as { require?: (name: string) => unknown }).require;
+    const nodeRequire = (window as unknown as { require?: (name: string) => unknown }).require;
     if (!nodeRequire) throw new Error("文件追踪检查仅支持电脑端");
     const fs = (nodeRequire("fs") as typeof import("fs")).promises;
     const path = nodeRequire("path") as typeof import("path");
@@ -1810,14 +1812,14 @@ export default class ZoeySyncPlugin extends Plugin {
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     const tracked = (await this.gitRaw(["ls-files", "--cached", "-z"])).split("\0").filter(Boolean);
     const ignored = (await this.gitRaw(["ls-files", "-ci", "--exclude-standard", "-z"])).split("\0").filter(Boolean);
-    const nestedRepos = await findNestedRepos(vaultPath);
-    const nestedData = new Set((await nestedRepoFiles(vaultPath, nestedRepos, (args) => this.gitRaw(args)))
+    const nestedRepos = await findNestedRepos(vaultPath, this.app.vault.configDir);
+    const nestedData = new Set((await nestedRepoFiles(vaultPath, nestedRepos, (args) => this.gitRaw(args), this.app.vault.configDir))
       .filter((name) => nestedRepos.some((repo) => name === `${repo.directory}/data.json`)));
     const paths = [...new Set([
       ...ignored.filter((file) => !nestedData.has(file)),
-      ...tracked.filter((file) => shouldIgnore(file, SETUP_GITIGNORE))
+      ...tracked.filter((file) => shouldIgnore(file, setupGitIgnore(this.app.vault.configDir), this.app.vault.configDir))
     ])].filter((file) => file !== ".gitignore").sort();
-    return { paths, missingRules: missingSetupIgnoreRules(existingIgnore) };
+    return { paths, missingRules: missingSetupIgnoreRules(existingIgnore, this.app.vault.configDir) };
   }
 
   async repairFileTracking(preview: FileTrackingPreview): Promise<number> {
@@ -2054,7 +2056,7 @@ export default class ZoeySyncPlugin extends Plugin {
   }
 
   async exec(program: string, args: string[], authenticated = false, trim = true, timeoutMs = 120000, onOutput?: (chunk: string) => void, stdinText?: string, signal?: AbortSignal): Promise<string> {
-    const nodeRequire = (globalThis as unknown as { require?: (name: string) => unknown }).require;
+    const nodeRequire = (window as unknown as { require?: (name: string) => unknown }).require;
     if (!nodeRequire) throw new Error("当前平台不支持桌面命令");
     const childProcess = nodeRequire("child_process") as typeof import("child_process");
     const env: NodeJS.ProcessEnv = { ...process.env };
@@ -2173,9 +2175,9 @@ export default class ZoeySyncPlugin extends Plugin {
 
   private async prepareNestedRepositories(): Promise<void> {
     const vaultPath = this.vaultBasePath();
-    const repos = await findNestedRepos(vaultPath);
+    const repos = await findNestedRepos(vaultPath, this.app.vault.configDir);
     if (!repos.length) return;
-    const nodeRequire = (globalThis as unknown as { require?: (name: string) => unknown }).require;
+    const nodeRequire = (window as unknown as { require?: (name: string) => unknown }).require;
     if (!nodeRequire) throw new Error("内嵌仓库同步仅支持桌面端");
     const fs = (nodeRequire("fs") as typeof import("fs")).promises;
     const path = nodeRequire("path") as typeof import("path");
@@ -2189,7 +2191,7 @@ export default class ZoeySyncPlugin extends Plugin {
       const separator = existing ? `${existing.endsWith("\n") ? "" : eol}${eol}` : "";
       await fs.writeFile(ignorePath, `${existing}${separator}# Embedded Git metadata stays local${eol}${missing.join(eol)}${eol}`, "utf8");
     }
-    await rebuildNestedRepoTracking(vaultPath, repos, (args) => this.gitRaw(args));
+    await rebuildNestedRepoTracking(vaultPath, repos, (args) => this.gitRaw(args), this.app.vault.configDir);
   }
 
   private async desktopFetchAndMerge(pushAfterResolve = false): Promise<boolean> {
@@ -2399,7 +2401,7 @@ class FileTrackingModal extends Modal {
     body.empty();
     body.createEl("h2", { text: "检查并修复文件追踪", cls: "zoey-sync-tracking-title" });
     body.createEl("p", { text: `待补充 ${this.preview.missingRules.length} 条忽略规则；${this.preview.paths.length} 个已追踪文件应改为仅本机保留。`, cls: "zoey-sync-tracking-summary" });
-    body.createEl("p", { text: "修复只调整这些文件的 Git 跟踪，并补齐缺少的 .gitignore 规则。本机文件和 Git 历史都会保留；下一次 Commit、Push 后，文件会从远端当前版本退出。", cls: "zoey-sync-tracking-description" });
+    body.createEl("p", { text: "修复只调整这些文件的 Git 跟踪，并补齐缺少的 .gitignore 规则。本机文件和 Git 历史都会保留；下一次 commit、push 后，文件会从远端当前版本退出。", cls: "zoey-sync-tracking-description" });
     if (this.preview.missingRules.length) {
       const rules = body.createEl("details", { cls: "zoey-sync-tracking-details" });
       rules.createEl("summary", { text: `查看待补充的规则（${this.preview.missingRules.length}）` });
@@ -2450,9 +2452,9 @@ class GitRepairModal extends Modal {
     });
     const list = container.createEl("ul");
     list.createEl("li", { text: "保护当前本机内容，并退出未完成的异常操作。" });
-    list.createEl("li", { text: "以恢复后的本机内容建立一个新的 Commit。" });
-    list.createEl("li", { text: "Fetch 云端版本并在本机 Merge；如有冲突，在右侧面板逐项选择。" });
-    list.createEl("li", { text: "修复完成后等待正常 Push 计时，不会立即上传。" });
+    list.createEl("li", { text: "以恢复后的本机内容建立一个新的 commit。" });
+    list.createEl("li", { text: "Fetch 云端版本并在本机 merge；如有冲突，在右侧面板逐项选择。" });
+    list.createEl("li", { text: "修复完成后等待正常 push 计时，不会立即上传。" });
     container.createEl("p", {
       text: "操作前会建立临时安全备份；恢复成功后自动清理，通常不需要你处理。",
       cls: "zoey-sync-conflict__warning"
@@ -2479,7 +2481,7 @@ class GitRepairModal extends Modal {
         })
         .catch((error) => {
           if (error instanceof SyncDeferredError) {
-            new Notice("Simple Link：异常状态已退出，本机内容已重新 Commit；合并冲突已保留在同步面板等待处理", 12000);
+            new Notice("Simple Link：异常状态已退出，本机内容已重新 commit；合并冲突已保留在同步面板等待处理", 12000);
           } else {
             new Notice(`Simple Link：异常修复未完成。${messageOf(error)}`, 15000);
           }
@@ -2499,7 +2501,7 @@ class LocalHistorySlimModal extends Modal {
     const body = this.contentEl;
     body.empty();
     body.createEl("h2", { text: "本地 Git 历史瘦身" });
-    body.createEl("p", { text: "已实时核对 GitHub 分支与本机 HEAD 一致，当前提交已上传。执行时会再核对一次。" });
+    body.createEl("p", { text: "已实时核对 GitHub 分支与本机 head 一致，当前提交已上传。执行时会再核对一次。" });
     body.createEl("p", {
       text: `本机约有 ${this.preview.totalCommits} 个可见 Commit，其中 ${this.preview.oldCommits} 个早于 30 天；Git 对象约 ${this.preview.localSizeMiB.toFixed(1)} MiB。`
     });
@@ -2529,7 +2531,7 @@ class LocalHistorySlimModal extends Modal {
         });
     });
     if (this.preview.oldCommits === 0) {
-      body.createEl("p", { text: "当前没有早于 30 天的可见 Commit，无需清理。" });
+      body.createEl("p", { text: "当前没有早于 30 天的可见 commit，无需清理。" });
     }
   }
 }
@@ -2627,7 +2629,7 @@ class ZoeySyncConflictView extends ItemView {
   }
 
   private renderTextBlocks(container: HTMLElement, path: string, content: string, blocks: ConflictBlock[]): void {
-    const resolutions: Array<string | undefined> = new Array(blocks.length);
+    const resolutions = Array.from<string | undefined>({ length: blocks.length });
     let applyButton: HTMLButtonElement;
 
     blocks.forEach((block, index) => {
@@ -2661,7 +2663,7 @@ class ZoeySyncConflictView extends ItemView {
       cls: "mod-cta zoey-sync-conflict__continue"
     });
     applyButton.disabled = true;
-    applyButton.addEventListener("click", async () => {
+    applyButton.addEventListener("click", asyncAction(async () => {
       if (resolutions.some((item) => item === undefined)) return;
       applyButton.disabled = true;
       try {
@@ -2671,7 +2673,7 @@ class ZoeySyncConflictView extends ItemView {
         new Notice(`无法应用冲突处理结果：${messageOf(error)}`, 8000);
         applyButton.disabled = false;
       }
-    });
+    }));
     this.renderFooter(container);
   }
 
@@ -2694,7 +2696,7 @@ class ZoeySyncConflictView extends ItemView {
 
   private renderFooter(container: HTMLElement): void {
     const footer = container.createDiv({ cls: "zoey-sync-conflict__footer" });
-    const explanation = footer.createEl("span", {
+    const explanation = footer.createSpan({
       text: this.paths.length > 1
         ? "可以先处理其他文件；未处理的冲突会一直保留在同步面板。"
         : "未处理的冲突会一直保留在同步面板，稍后可以继续。"
@@ -2731,7 +2733,7 @@ class ErrorLogModal extends Modal {
 
   onOpen(): void {
     this.modalEl.addClass("zoey-sync-error-modal");
-    this.render();
+    void this.render().catch(error => new Notice(messageOf(error), 8000));
   }
 
   private async render(): Promise<void> {
@@ -2742,7 +2744,7 @@ class ErrorLogModal extends Modal {
     const heading = overview.createDiv();
     heading.createEl("h2", { text: "最近同步日志" });
     heading.createEl("p", {
-      text: "仅保留最近 24 小时的 Commit、同步和连接记录。",
+      text: "仅保留最近 24 小时的 commit、同步和连接记录。",
       cls: "zoey-sync-error-modal__intro"
     });
     const lastTimes = overview.createDiv({ cls: "zoey-sync-error-modal__last-times" });
@@ -2786,10 +2788,10 @@ class ErrorLogModal extends Modal {
     const actions = container.createDiv({ cls: "zoey-sync-error-modal__actions" });
     if (logs.length > 0) {
       const clearButton = actions.createEl("button", { text: "清空日志" });
-      clearButton.addEventListener("click", async () => {
+      clearButton.addEventListener("click", asyncAction(async () => {
         await this.plugin.clearErrorLogs();
         await this.render();
-      });
+      }));
     }
     const closeButton = actions.createEl("button", { text: "关闭", cls: "mod-cta" });
     closeButton.addEventListener("click", () => this.close());
@@ -2923,7 +2925,7 @@ class ZoeySyncView extends ItemView {
 
     const status = container.createDiv({ cls: "zoey-sync-view__status" });
     status.addClass(`is-${statusState.tone}`);
-    const statusDot = status.createSpan({ cls: "zoey-sync-view__status-dot" });
+    status.createSpan({ cls: "zoey-sync-view__status-dot" });
     status.createSpan({ text: statusState.text, cls: "zoey-sync-view__status-text" });
 
     if (pendingConflictPaths.length > 0) {
@@ -2966,14 +2968,19 @@ class ZoeySyncView extends ItemView {
       "aria-label",
       mode === "commit" ? "Commit 当前列表中的本机更改" : "下载远端更新并上传本机更改"
     );
-    actionButton.addEventListener("click", async () => {
+    actionButton.addEventListener("click", asyncAction(async () => {
       actionButton.disabled = true;
       actionButton.addClass("is-loading");
       actionLabel.setText(mode === "commit" ? "Commit 中…" : "同步中…");
-      if (mode === "commit") await this.plugin.commitNow(true);
-      else await this.plugin.syncNow(true);
-      await this.render();
-    });
+      try {
+        if (mode === "commit") await this.plugin.commitNow(true);
+        else await this.plugin.syncNow(true);
+        await this.render();
+      } finally {
+        actionButton.disabled = this.plugin.isSyncing();
+        actionButton.removeClass("is-loading");
+      }
+    }));
     if (this.plugin.settings.showVersionViewSwitcher) {
       sectionHeader.addClass("has-mode-control");
       this.createModeControl(sectionHeader, mode);
@@ -3026,7 +3033,8 @@ class ZoeySyncView extends ItemView {
       button.toggleClass("is-active", value === current);
       button.setAttr("aria-pressed", String(value === current));
       button.setAttr("aria-label", tooltip);
-      button.innerHTML = svg;
+      addIcon(`simple-link-mode-${value}`, svg);
+      setIcon(button, `simple-link-mode-${value}`);
       setTooltip(button, tooltip);
       button.addEventListener("click", () => void this.plugin.setChangeViewMode(value));
     };
@@ -3046,7 +3054,7 @@ class ZoeySyncView extends ItemView {
     const menu = new Menu();
     menu.addItem((item) =>
       item
-        .setTitle("显示待 Commit 列表")
+        .setTitle("显示待 commit 列表")
         .setIcon(this.plugin.settings.showVersionViewSwitcher ? CHECKBOX_CHECKED_ICON : "square")
         .onClick(() => void this.plugin.setVersionViewSwitcher(!this.plugin.settings.showVersionViewSwitcher))
     );
@@ -3199,8 +3207,22 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     super(app, plugin);
   }
 
-  display(): void {
-    const { containerEl } = this;
+  getSettingDefinitions(): SettingDefinitionItem[] {
+    return [{ name: "同步与设备设置", aliases: ["电脑", "手机", "服务器", "GitHub", "Token"], render: (setting) => {
+      setting.settingEl.empty();
+      setting.settingEl.addClass("simple-link-settings-render");
+      this.settingsHost = setting.settingEl;
+      this.renderSettings();
+      return () => { this.settingsHost = undefined; this.lightweightGuideController?.abort(); this.setupBrowserController?.abort(); };
+    } }];
+  }
+
+  private settingsHost?: HTMLElement;
+
+  display(): void { this.renderSettings(); }
+
+  private renderSettings(): void {
+    const containerEl = this.settingsHost ?? this.containerEl;
     containerEl.empty();
     if (this.desktopPage !== "beginner-mobile") { this.lightweightGuideController?.abort(); this.lightweightGuideController = undefined; this.lightweightGuideToken = ""; this.lightweightGuideStatus = ""; this.lightweightGuideStep = 1; this.lightweightGuideDraft = undefined; this.lightweightGuideLogin = ""; this.lightweightGuideVerified = undefined; }
     containerEl.addClass("zoey-sync-settings");
@@ -3215,7 +3237,6 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     if (!Platform.isMobile && this.desktopPage === "setup") { this.displaySetup(containerEl); return; }
     if (!Platform.isMobile && this.desktopPage === "desktop-settings") { this.displayDesktopSettings(containerEl); return; }
 
-    containerEl.createEl("h2", { text: "Simple Link" });
     this.addEnableSetting(containerEl);
     this.addDefaultRepoSetting(containerEl);
     this.displayBeginner(containerEl);
@@ -3237,7 +3258,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     const row = new Setting(parent).setName("启用电脑端原生 Git 同步")
       .setDesc("关闭后停止原生 Git 同步，下方设置暂停使用。")
       .addToggle((toggle) => toggle.setValue(this.plugin.nativeGitEnabled()).onChange(async (enabled) => {
-        await this.plugin.setDesktopSyncMode(enabled ? "git" : this.plugin.useLightweightSync() ? "lightweight" : "off"); this.display();
+        await this.plugin.setDesktopSyncMode(enabled ? "git" : this.plugin.useLightweightSync() ? "lightweight" : "off"); this.renderSettings();
       }));
     row.settingEl.addClass("zoey-sync-engine-switch");
   }
@@ -3246,7 +3267,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     const row = new Setting(parent).setName("启用轻量 Git 同步")
       .setDesc("关闭后停止轻量同步，下方设置暂停使用。")
       .addToggle((toggle) => toggle.setValue(this.plugin.useLightweightSync()).onChange(async (enabled) => {
-        await this.plugin.setLightweightSyncEnabled(enabled); this.display();
+        await this.plugin.setLightweightSyncEnabled(enabled); this.renderSettings();
       }));
     row.settingEl.addClass("zoey-sync-engine-switch");
   }
@@ -3266,20 +3287,20 @@ class ZoeySyncSettingTab extends PluginSettingTab {
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.enabled).onChange(async (value) => {
           await this.plugin.setFeatureEnabled(value);
-          this.display();
+          this.renderSettings();
         })
       );
   }
 
   private displayMobile(containerEl: HTMLElement): void {
-    containerEl.createEl("h3", { text: "手机端设置", cls: "zoey-sync-section-title" });
+    new Setting(containerEl).setName("手机端设置").setHeading();
     containerEl.createEl("p", {
       text: "移动端兼容仍在完善，以下仅保留当前已经实现的服务器同步设置。",
       cls: "zoey-sync-section-desc"
     });
     new Setting(containerEl)
       .setName("服务器地址")
-      .setDesc("公网必须使用 HTTPS，例如 https://sync.example.com。")
+      .setDesc("公网必须使用 HTTPS，例如 HTTPS://sync.example.com。")
       .addText((text) =>
         text
           .setPlaceholder("https://sync.example.com")
@@ -3335,7 +3356,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     button.addEventListener("click", () => {
       if (page === "setup") this.prepareSetupGuide();
       this.desktopPage = page;
-      this.display();
+      this.renderSettings();
     });
   }
 
@@ -3350,7 +3371,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
   }
 
   private displayBeginner(containerEl: HTMLElement): void {
-    containerEl.createEl("h3", { text: "入门小助手", cls: "zoey-sync-section-title" });
+    new Setting(containerEl).setName("入门小助手").setHeading();
     containerEl.createEl("p", { text: "从创建仓库开始，按设备查看接入步骤。", cls: "zoey-sync-section-desc" });
     const links = containerEl.createDiv({ cls: "zoey-sync-beginner-links" });
     this.addBeginnerLink(links, "电脑端同步引导", "monitor", Platform.isMobile ? "beginner-desktop" : "setup");
@@ -3368,7 +3389,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
       this.lightweightGuideDraft = { ...options, plugins: [...options.plugins], ignorePatterns: [...options.ignorePatterns],
         repoUrl, branch: options.repoUrl === repoUrl ? options.branch : "" };
     }
-    page.createEl("div", { text: "接入进度", cls: "zoey-sync-setup-progress-label" });
+    page.createDiv({ text: "接入进度", cls: "zoey-sync-setup-progress-label" });
     const nav = page.createDiv({ cls: "zoey-sync-setup-nav zoey-sync-lightweight-nav" });
     const available = this.lightweightGuideVerified ? 4 : this.lightweightGuideLogin ? 3 : 2;
     ["获取 Token", "核验 Token", "选择仓库", "同步规则"].forEach((label, index) => {
@@ -3381,14 +3402,14 @@ class ZoeySyncSettingTab extends PluginSettingTab {
       button.disabled = step > available || this.lightweightGuideBusy;
       button.addEventListener("click", () => {
         if (this.lightweightGuideBusy || (step === 3 && !this.lightweightGuideLogin) || (step === 4 && !this.lightweightGuideVerified)) return;
-        this.lightweightGuideController?.abort(); this.lightweightGuideStep = step; this.display();
+        this.lightweightGuideController?.abort(); this.lightweightGuideStep = step; this.renderSettings();
       });
     });
     if (this.lightweightGuideStep !== 1) { this.displayLightweightGuideStep(page); return; }
     const card = page.createDiv({ cls: "zoey-sync-mobile-guide__card" });
     const ready = !!this.lightweightGuideToken;
-    card.createEl("h3", { text: "1 · 获取 Token", cls: "zoey-sync-mobile-guide__title" });
-    card.createEl("p", { text: "建议先在电脑端完成浏览器登录授权，再在本引导内一键获取 Token。手机端可选择「已有 Token，直接填入」核验连接。", cls: "zoey-sync-section-desc" });
+    new Setting(card).setName("1 · 获取 token").setHeading();
+    card.createEl("p", { text: "建议先在电脑端完成浏览器登录授权，再在本引导内一键获取 token。手机端可选择「已有 token，直接填入」核验连接。", cls: "zoey-sync-section-desc" });
     const loginStatus = card.createDiv({ cls: "zoey-sync-setup-status", attr: { role: "status", "aria-live": "polite" } });
     const loginIcon = loginStatus.createSpan({ cls: "zoey-sync-setup-status__icon" });
     setIcon(loginIcon, "loader-circle");
@@ -3400,11 +3421,11 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     prerequisites.addEventListener("click", () => {
       this.desktopPage = Platform.isMobile ? "beginner-desktop" : "setup";
       this.setupViewStep = 1;
-      this.display();
+      this.renderSettings();
     });
     const actions = card.createDiv({ cls: "zoey-sync-mobile-guide__actions" });
-    const acquire = actions.createEl("button", { text: "一键获取 Token（PC 端）", cls: Platform.isMobile ? "" : "mod-cta", attr: { type: "button" } });
-    const fill = actions.createEl("button", { text: "已有 Token，直接填入", cls: Platform.isMobile ? "mod-cta" : "", attr: { type: "button" } });
+    const acquire = actions.createEl("button", { text: "一键获取 token（pc 端）", cls: Platform.isMobile ? "" : "mod-cta", attr: { type: "button" } });
+    const fill = actions.createEl("button", { text: "已有 token，直接填入", cls: Platform.isMobile ? "mod-cta" : "", attr: { type: "button" } });
     let loginReady = false;
     let acquiring = false;
     acquire.disabled = true;
@@ -3418,22 +3439,22 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     tokenBox.createDiv({ text: "GitHub Token", cls: "zoey-sync-mobile-guide__token-label" });
     const row = tokenBox.createDiv({ cls: "zoey-sync-mobile-guide__token-row" });
     row.createEl("code", { text: this.lightweightGuideToken, cls: "zoey-sync-mobile-guide__token-text" });
-    const copy = row.createEl("button", { text: "复制 Token", attr: { type: "button" } });
+    const copy = row.createEl("button", { text: "复制 token", attr: { type: "button" } });
     const copyStatus = tokenBox.createEl("p", { cls: "zoey-sync-mobile-guide__result", attr: { role: "status", "aria-live": "polite" } });
     const reportCopy = (text: string, error = false) => {
       copyStatus.setText(text); copyStatus.toggleClass("zoey-sync-setup-done", !error); copyStatus.toggleClass("zoey-sync-setup-error", error);
     };
     copy.addEventListener("click", () => void navigator.clipboard.writeText(this.lightweightGuideToken)
       .then(() => reportCopy("Token 已复制。"), () => reportCopy("复制失败，请手动复制 Token。", true)));
-    tokenBox.createEl("p", { text: "请妥善保存 Token，便于在手机端填入或更换设备时使用。", cls: "zoey-sync-mobile-guide__token-reminder" });
+    tokenBox.createEl("p", { text: "请妥善保存 token，便于在手机端填入或更换设备时使用。", cls: "zoey-sync-mobile-guide__token-reminder" });
     const accept = (token: string) => {
       if (!valid()) return;
       this.lightweightGuideDraft!.token = token;
       this.lightweightGuideLogin = ""; this.lightweightGuideVerified = undefined;
       this.lightweightGuideToken = token; this.lightweightGuideStatus = "";
-      this.display();
+      this.renderSettings();
     };
-    fill.addEventListener("click", () => { this.lightweightGuideStep = 2; this.display(); });
+    fill.addEventListener("click", () => { this.lightweightGuideStep = 2; this.renderSettings(); });
     const updateLoginStatus = (loggedIn: boolean, description: string, needsPrerequisites = !loggedIn): void => {
       if (!valid()) return;
       loginReady = loggedIn && !Platform.isMobile;
@@ -3447,7 +3468,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     };
     if (Platform.isMobile) {
       loginTitle.setText("在电脑端获取，在手机端填入");
-      loginDescription.setText("请先在电脑端获取 Token，再点击「已有 Token，直接填入」核验连接。");
+      loginDescription.setText("请先在电脑端获取 token，再点击「已有 token，直接填入」核验连接。");
       setIcon(loginIcon, "smartphone");
     } else {
       void Promise.allSettled([
@@ -3474,7 +3495,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
           throw new Error("请先完成 GitHub 登录");
         }
         if (!valid() || login.signal.aborted) return;
-        loginDescription.setText("GitHub CLI 登录已核验，正在获取 Token。");
+        loginDescription.setText("GitHub CLI 登录已核验，正在获取 token。");
         report("正在获取登录 Token…");
         const token = (await this.plugin.exec("gh", ["auth", "token", "--hostname", "github.com"], false, true, 30000)).trim();
         if (!token) throw new Error("当前登录未返回 Token");
@@ -3489,8 +3510,8 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     })());
     if (ready) {
       const footer = card.createDiv({ cls: "zoey-sync-setup-footer" });
-      const next = footer.createEl("button", { text: "我已保存好 Token", cls: "mod-cta", attr: { type: "button", title: "继续配置轻量同步" } });
-      next.addEventListener("click", () => { this.lightweightGuideStep = 2; this.display(); });
+      const next = footer.createEl("button", { text: "我已保存好 token", cls: "mod-cta", attr: { type: "button", title: "继续配置轻量同步" } });
+      next.addEventListener("click", () => { this.lightweightGuideStep = 2; this.renderSettings(); });
     }
   }
 
@@ -3517,16 +3538,16 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         this.lightweightGuideBusy = false;
         if (valid()) controls.forEach((control, index) => { control.disabled = disabled[index]; });
         updateNext();
-        if (!valid() && this.desktopPage === "beginner-mobile" && this.lightweightGuideDraft === options) this.display();
+        if (!valid() && this.desktopPage === "beginner-mobile" && this.lightweightGuideDraft === options) this.renderSettings();
       }
     };
-    body.createEl("h3", { text: step === 2 ? "2 · 核验 Token" : step === 3 ? "选择 GitHub 私人仓库" : "4 · 设置同步规则", cls: step === 3 ? "zoey-sync-setup-step-title" : "zoey-sync-mobile-guide__title" });
+    new Setting(body).setName("").setHeading();
     if (step === 2) {
-      body.createEl("p", { text: "填入 Token，核验是否能成功连接 GitHub。连接成功后自动进入选择仓库。" });
+      body.createEl("p", { text: "填入 token，核验是否能成功连接 GitHub。连接成功后自动进入选择仓库。" });
       body.createEl("p", { text: "Token 仅保存在本机，不写入共享配置。" });
-      const tokenSetting = new Setting(body).setName("GitHub Token").addText((text) => {
+      const tokenSetting = new Setting(body).setName("GitHub token").addText((text) => {
         text.inputEl.type = "password";
-        text.setPlaceholder("粘贴 GitHub Token").setValue(options.token).onChange((value) => {
+        text.setPlaceholder("粘贴 GitHub token").setValue(options.token).onChange((value) => {
           options.token = value.trim(); this.lightweightGuideToken = options.token;
           this.lightweightGuideLogin = ""; this.lightweightGuideVerified = undefined;
           status.empty(); updateNext();
@@ -3541,7 +3562,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         if (!valid()) return;
         this.lightweightGuideLogin = login;
         this.lightweightGuideStep = 3;
-        this.display();
+        this.renderSettings();
       })));
       if (this.lightweightGuideLogin) report(`✓ Token 有效，当前账号：${this.lightweightGuideLogin}。`);
     } else if (step === 3) {
@@ -3554,7 +3575,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         const selected = mode === this.lightweightGuideRepoMode;
         const button = modes.createEl("button", { text: mode === "existing" ? "使用已有 GitHub 仓库" : "新建 GitHub 私人仓库",
           cls: `zoey-sync-setup-option${selected ? " is-selected" : ""}`, attr: { type: "button", "aria-pressed": String(selected) } });
-        button.addEventListener("click", () => { this.lightweightGuideRepoMode = mode; this.lightweightGuideVerified = undefined; this.display(); });
+        button.addEventListener("click", () => { this.lightweightGuideRepoMode = mode; this.lightweightGuideVerified = undefined; this.renderSettings(); });
       }
       const card = body.createDiv({ cls: "zoey-sync-setup-detail" });
       const checkRepository = async () => {
@@ -3566,13 +3587,13 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         options.repoUrl = parseGithubRepoUrl(options.repoUrl).url; options.branch = remote.branch;
         this.lightweightGuideVerified = remote;
         this.lightweightGuideStep = 4;
-        this.display();
+        this.renderSettings();
       };
       if (this.lightweightGuideRepoMode === "create") {
         const heading = card.createDiv({ cls: "zoey-sync-setup-section-header" });
-        heading.createEl("h4", { text: "创建 GitHub 新仓库" });
-        card.createEl("p", { text: "填写仓库名称后，在当前 GitHub 账号下创建 Private（私人）仓库，并初始化 README 和默认分支。此时不会推送本地文件。" });
-        new Setting(card).setName("新仓库名称").addText((text) => text.setPlaceholder("例如 my-obsidian-vault").setValue(this.lightweightGuideRepoName)
+        new Setting(heading).setName("创建 GitHub 新仓库").setHeading();
+        card.createEl("p", { text: "填写仓库名称后，在当前 GitHub 账号下创建 private（私人）仓库，并初始化 README 和默认分支。此时不会推送本地文件。" });
+        new Setting(card).setName("新仓库名称").addText((text) => text.setPlaceholder("例如 my-Obsidian-vault").setValue(this.lightweightGuideRepoName)
           .onChange((value) => { this.lightweightGuideRepoName = value.trim(); })).settingEl.addClass("zoey-sync-setup-repo-name");
         card.appendChild(status);
         new Setting(card).addButton((button) => button.setButtonText("创建私人仓库").setCta().onClick(() => void run(async () => {
@@ -3583,14 +3604,14 @@ class ZoeySyncSettingTab extends PluginSettingTab {
           this.lightweightGuideRepoMode = "existing";
           try { await checkRepository(); }
           catch (error) {
-            this.display();
+            this.renderSettings();
             new Notice(`私人仓库已创建，但核验未完成：${messageOf(error)}。请检查已有仓库后继续。`, 10000);
           }
         }))).settingEl.addClass("zoey-sync-setup-action");
       } else {
-        card.createEl("h4", { text: "核验已有 GitHub 仓库" });
-        card.createEl("p", { text: "在已有 GitHub 仓库页面点击「Code」，复制 HTTPS 地址并填入下方。" });
-        card.createEl("p", { text: "核验仓库私人状态、默认主分支以及当前 Token 的读写权限，通过后自动进入同步规则。", cls: "zoey-sync-setup-helper" });
+        new Setting(card).setName("核验已有 GitHub 仓库").setHeading();
+        card.createEl("p", { text: "在已有 GitHub 仓库页面点击「code」，复制 HTTPS 地址并填入下方。" });
+        card.createEl("p", { text: "核验仓库私人状态、默认主分支以及当前 token 的读写权限，通过后自动进入同步规则。", cls: "zoey-sync-setup-helper" });
         const invalidate = () => { this.lightweightGuideVerified = undefined; status.empty(); updateNext(); };
         const repoSetting = new Setting(card).setName("GitHub 仓库地址").addText((text) => text.setPlaceholder("https://github.com/用户名/仓库.git").setValue(options.repoUrl)
           .onChange((value) => { options.repoUrl = value.trim(); invalidate(); }));
@@ -3621,7 +3642,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
           page.querySelectorAll(".zoey-sync-lightweight-nav button").forEach(button => button.addClass("is-done"));
           await new Promise<void>(resolve => window.setTimeout(resolve, 650));
           if (!valid()) return;
-          this.desktopPage = "mobile"; this.display();
+          this.desktopPage = "mobile"; this.renderSettings();
         });
       });
     }
@@ -3640,8 +3661,8 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     const header = page.createDiv({ cls: "zoey-sync-page-header zoey-sync-setup-header" });
     const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", title: "返回", "aria-label": "返回设备同步" } });
     setIcon(back, "arrow-left");
-    back.addEventListener("click", () => { this.desktopPage = "root"; this.display(); });
-    header.createEl("h2", { text: "电脑端 Git 同步", cls: "zoey-sync-page-title" });
+    back.addEventListener("click", () => { this.desktopPage = "root"; this.renderSettings(); });
+    new Setting(header).setName("电脑端 Git 同步").setHeading();
     this.addDesktopEngineControls(page);
     const body = this.syncSettingsBody(page, this.plugin.nativeGitEnabled());
     this.displayDesktopAdvanced(body);
@@ -3649,7 +3670,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
 
   private displayDesktop(containerEl: HTMLElement): void {
     const currentDevice = this.currentDevice();
-    containerEl.createEl("h3", { text: "设不同设备同步设置", cls: "zoey-sync-section-title" });
+    new Setting(containerEl).setName("设不同设备同步设置").setHeading();
     containerEl.createEl("p", { text: "已自动识别当前设备；电脑也可以进入手机轻量同步进行配置和运行。", cls: "zoey-sync-section-desc" });
     this.addSetupEntry(containerEl, currentDevice === "git");
     const entries = [
@@ -3671,7 +3692,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
       if (accessible) {
         if (isCurrent) this.addCurrentDeviceBadge(button);
         setIcon(button.createSpan({ cls: "zoey-sync-page-link__chevron" }), "chevron-right");
-        button.addEventListener("click", () => { this.desktopPage = entry.page; this.display(); });
+        button.addEventListener("click", () => { this.desktopPage = entry.page; this.renderSettings(); });
       }
     }
   }
@@ -3680,19 +3701,19 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     const header = containerEl.createDiv({ cls: "zoey-sync-page-header" });
     const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", "aria-label": "返回" } });
     setIcon(back, "arrow-left");
-    back.addEventListener("click", () => { this.desktopPage = "root"; this.display(); });
-    header.createEl("h2", { text: title, cls: "zoey-sync-page-title" });
+    back.addEventListener("click", () => { this.desktopPage = "root"; this.renderSettings(); });
+    new Setting(header).setName("").setHeading();
     containerEl.createEl("p", { text: description, cls: "zoey-sync-section-desc" });
   }
 
   private displayServerPreview(containerEl: HTMLElement): void {
     this.displayDevicePreview(containerEl, "服务器端同步", "Linux 服务器端的同步设置将在这里补充。");
-    containerEl.createEl("h3", { text: "待更新", cls: "zoey-sync-section-title" });
+    new Setting(containerEl).setName("待更新").setHeading();
     const todo = containerEl.createEl("ul");
     todo.createEl("li", { text: "本地 Git 历史瘦身：仅整理服务器本机的旧历史，保留 GitHub 上的完整历史；执行前确认本地提交已上传。" });
     todo.createEl("li", { text: "按 .gitignore 重建追踪：让已追踪、后来被忽略的文件退出 Git 索引，保留服务器本机文件；不改变手机端的文件拉取设置。" });
     todo.createEl("li", { text: "电脑端和手机端同步页待增加「高级设置」：顶部放便捷开关，下面先放「重建追踪」，最后放「预览当前的」；具体追踪范围待确认。" });
-    todo.createEl("li", { text: "待决定 .obsidian 目录的策略：整目录退出 Git 追踪，或按核心配置、插件、主题分类保留；每台设备的下载范围另行设置。" });
+    todo.createEl("li", { text: "待决定 .Obsidian 目录的策略：整目录退出 Git 追踪，或按核心配置、插件、主题分类保留；每台设备的下载范围另行设置。" });
     todo.createEl("li", { text: "维护任务与同步操作错开执行，并展示检查结果、执行记录和操作前后的空间占用。" });
   }
 
@@ -3700,7 +3721,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     this.displayDevicePreview(containerEl, "轻量 Git 同步", "适用于安卓、iOS，也适用于电脑");
     this.addLightweightEngineControl(containerEl);
     const body = this.syncSettingsBody(containerEl, this.plugin.useLightweightSync());
-    renderMobileSettings(body, this.plugin.mobileHost(), false, () => this.display());
+    renderMobileSettings(body, this.plugin.mobileHost(), false, () => this.renderSettings());
     if (this.plugin.settings.mobile.mode === "server") this.displayMobile(body);
   }
 
@@ -3716,7 +3737,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     setIcon(button.createSpan({ cls: "zoey-sync-page-link__chevron" }), "chevron-right");
     button.addEventListener("click", () => {
       this.desktopPage = "desktop-settings";
-      this.display();
+      this.renderSettings();
     });
   }
 
@@ -3744,7 +3765,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     };
     publish();
     const timer = step <= 3 ? window.setInterval(publish, 1000) : undefined;
-    this.display();
+    this.renderSettings();
     try {
       await action();
       if (success !== undefined) this.setupMessage = success;
@@ -3758,7 +3779,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     } finally {
       if (timer !== undefined) window.clearInterval(timer);
       this.setupBusy = false;
-      this.display();
+      this.renderSettings();
     }
   }
 
@@ -3776,27 +3797,27 @@ class ZoeySyncSettingTab extends PluginSettingTab {
 
   private async advanceSetupAfterAuthorization(): Promise<void> {
     this.syncSetupProgress(1, "✓ GitHub 授权已核验，正在进入选择仓库。", "success");
-    this.display();
+    this.renderSettings();
     const success = this.containerEl.querySelector(".zoey-sync-setup-auth .zoey-sync-setup-done");
     await new Promise<void>((resolve) => window.setTimeout(resolve, 650));
     if (!success?.isConnected || this.desktopPage !== "setup" || this.setupViewStep !== 1 ||
       this.setupPlatform !== "github" || !this.setupAuthVerified) return;
     this.setupViewStep = 2;
     this.setupMessage = "";
-    this.display();
+    this.renderSettings();
   }
 
   private async advanceSetupAfterCheck(step: number, ready: () => boolean): Promise<void> {
     if (this.desktopPage !== "setup" || this.setupViewStep !== step || !ready()) return;
     this.setupMessage = "✓ 已成功，正在进入下一步…";
     this.syncSetupProgress(step, this.setupMessage, "success");
-    this.display();
+    this.renderSettings();
     const body = this.containerEl.querySelector(".zoey-sync-setup-body");
     await new Promise<void>((resolve) => window.setTimeout(resolve, 650));
     if (!body?.isConnected || this.desktopPage !== "setup" || this.setupViewStep !== step || !ready()) return;
     this.setupViewStep = step + 1;
     this.setupMessage = "";
-    this.display();
+    this.renderSettings();
   }
 
   private async advanceSetupAfterPreview(): Promise<void> {
@@ -3806,7 +3827,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
   }
 
   private updateSetupPreviewSelection(): void {
-    this.display();
+    this.renderSettings();
     if (this.setupPreviewReady()) {
       void this.runSetup(() => this.advanceSetupAfterPreview(), "", false);
     }
@@ -3849,14 +3870,14 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     };
     publish();
     const progressTimer = window.setInterval(publish, 1000);
-    this.display();
+    this.renderSettings();
     try {
       await this.plugin.authorizeSetup((code) => {
         if (request !== this.setupBrowserRequest) return;
         this.setupDeviceCode = code;
         this.setupMessage = "设备码已获取，等待浏览器完成登录授权…";
         publish();
-        this.display();
+        this.renderSettings();
       }, controller.signal);
       if (request !== this.setupBrowserRequest) return;
       this.setupMessage = "浏览器授权已返回，正在核验 GitHub 登录状态…";
@@ -3878,7 +3899,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
       if (request === this.setupBrowserRequest) {
         this.setupBrowserPending = false;
         this.setupBrowserController = undefined;
-        this.display();
+        this.renderSettings();
       }
     }
   }
@@ -3888,8 +3909,8 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     const header = page.createDiv({ cls: "zoey-sync-page-header zoey-sync-setup-header" });
     const back = header.createEl("button", { cls: "clickable-icon zoey-sync-page-back", attr: { type: "button", title: "返回", "aria-label": "返回设置" } });
     setIcon(back, "arrow-left");
-    back.addEventListener("click", () => { this.stopSetupBrowserAuthorization(); this.desktopPage = "root"; this.display(); });
-    header.createEl("h2", { text: "从创建仓库开始：电脑端同步", cls: "zoey-sync-page-title" });
+    back.addEventListener("click", () => { this.stopSetupBrowserAuthorization(); this.desktopPage = "root"; this.renderSettings(); });
+    new Setting(header).setName("从创建仓库开始：电脑端同步").setHeading();
     page.createEl("p", { text: "按顺序完成四步。已核验的步骤可以随时返回查看。", cls: "zoey-sync-section-desc" });
     const guidedDone = this.plugin.settings.setupComplete && !!this.plugin.settings.setupVerified;
     const latestConnectionLog = this.plugin.getRecentErrorLogs()
@@ -3940,9 +3961,9 @@ class ZoeySyncSettingTab extends PluginSettingTab {
       cancel.disabled = this.setupBusy;
       cancel.addEventListener("click", () => void this.runSetup(() => this.plugin.cancelSetup(), "已恢复之前的同步配置。"));
     }
-    page.createEl("h3", { text: "接入引导", cls: "zoey-sync-section-title zoey-sync-setup-guide-title" });
+    new Setting(page).setName("接入引导").setHeading();
     const panel = page.createDiv({ cls: "zoey-sync-setup-tab-panel" });
-    panel.createEl("div", { text: "接入进度", cls: "zoey-sync-setup-progress-label" });
+    panel.createDiv({ text: "接入进度", cls: "zoey-sync-setup-progress-label" });
     const steps = ["安装与授权", "选择仓库", "检查两端", "完成接入"];
     const nav = panel.createDiv({ cls: "zoey-sync-setup-nav" });
     steps.forEach((label, index) => {
@@ -3958,10 +3979,9 @@ class ZoeySyncSettingTab extends PluginSettingTab {
       tab.createSpan({ text: String(number), cls: "zoey-sync-setup-nav__marker" });
       tab.createSpan({ text: label, cls: "zoey-sync-setup-nav__label" });
       tab.disabled = !this.plugin.settings.setupComplete && number > this.plugin.settings.setupStep;
-      tab.addEventListener("click", () => { this.setupViewStep = number; this.setupMessage = ""; this.setupFailure = false; this.display(); });
+      tab.addEventListener("click", () => { this.setupViewStep = number; this.setupMessage = ""; this.setupFailure = false; this.renderSettings(); });
     });
     const body = panel.createDiv({ cls: "zoey-sync-card zoey-sync-setup-body" });
-    const titles = ["安装与授权", "选择 GitHub 私人仓库", "检查本地与远端", "完成接入"];
     const descriptions = [
       "",
       "可以核验已有仓库，也可以由插件创建一个新的私人仓库。",
@@ -3969,7 +3989,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
       guidedDone ? "接入已完成，可回看核验结果或重新检查两端状态。" : "确认接入信息，然后执行首次推送。"
     ];
     if (this.setupViewStep !== 1) {
-      body.createEl("h3", { text: titles[this.setupViewStep - 1], cls: "zoey-sync-setup-step-title" });
+      new Setting(body).setName("").setHeading();
       body.createEl("p", { text: descriptions[this.setupViewStep - 1], cls: "zoey-sync-setup-step-desc" });
     }
     if (this.setupViewStep === 1) this.displaySetupAuth(body);
@@ -3981,7 +4001,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
   private displaySetupAuth(body: HTMLElement): void {
     body.addClass("zoey-sync-setup-intro", "zoey-sync-setup-platform-step");
     const heading = body.createDiv({ cls: "zoey-sync-setup-section-header" });
-    heading.createEl("h4", { text: "选择同步平台" });
+    new Setting(heading).setName("选择同步平台").setHeading();
     heading.createSpan({ text: "当前仅支持 GitHub", cls: "zoey-sync-setup-badge" });
     const options = body.createDiv({ cls: "zoey-sync-setup-options" });
     for (const platform of ["github", "gitee"] as const) {
@@ -3992,21 +4012,21 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         this.setupPlatform = platform;
         this.setupMessage = "";
         this.setupFailure = false;
-        this.display();
+        this.renderSettings();
       });
     }
     if (this.setupPlatform === "gitee") body.createEl("p", { text: "Gitee 尚未做实际兼容，请选择 GitHub 继续。", cls: "zoey-sync-setup-intro__unavailable" });
     else {
       const platformContent = body.createDiv({ cls: "zoey-sync-setup-platform-content", attr: { role: "group", "aria-label": "GitHub 接入步骤" } });
       const toolsCard = platformContent.createDiv({ cls: "zoey-sync-setup-detail" });
-      toolsCard.createEl("h4", { text: "安装工具" });
+      new Setting(toolsCard).setName("安装工具").setHeading();
       toolsCard.createEl("p", { text: "电脑端需要 Git 执行同步命令，GitHub CLI 用于登录、建仓和仓库核验。若没有 GitHub 账号，请先完成注册。" });
       const downloadLinks = toolsCard.createDiv({ cls: "zoey-sync-setup-links" });
       this.setupLink(downloadLinks, "下载 Git ↗", "https://git-scm.com/downloads");
       this.setupLink(downloadLinks, "下载 GitHub CLI ↗", "https://cli.github.com/");
 
       const authCard = platformContent.createDiv({ cls: "zoey-sync-setup-detail zoey-sync-setup-auth" });
-      authCard.createEl("h4", { text: "选择 GitHub 授权方式" });
+      new Setting(authCard).setName("选择 GitHub 授权方式").setHeading();
       const authOptions = authCard.createDiv({ cls: "zoey-sync-setup-options" });
       for (const mode of ["browser", "token", "verify"] as const) {
         const selected = this.setupAuthMode === mode;
@@ -4026,7 +4046,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
               () => this.verifyExistingSetupAuthorization(),
               "已成功，GitHub 授权已核验。"
             );
-          } else this.display();
+          } else this.renderSettings();
         });
       }
       if (this.setupAuthMode === "browser") {
@@ -4054,14 +4074,14 @@ class ZoeySyncSettingTab extends PluginSettingTab {
           this.verifySetupAuthorization(() => this.plugin.checkSetupAuthorization(), "GitHub 授权已核验。")))
           .settingEl.addClass("zoey-sync-setup-auth-action", "zoey-sync-setup-auth-submit");
       } else if (this.setupAuthMode === "token") {
-        authCard.createEl("p", { text: "本插件不在设置中保存 Token；Token 会交给本机 GitHub CLI 保存，用于登录与后续同步。" });
+        authCard.createEl("p", { text: "本插件不在设置中保存 token；token 会交给本机 GitHub CLI 保存，用于登录与后续同步。" });
         const tokenHint = authCard.createDiv({ cls: "zoey-sync-setup-token-hint" });
         const hintIcon = tokenHint.createSpan({ cls: "zoey-sync-setup-token-hint__icon", attr: { "aria-hidden": "true" } });
         setIcon(hintIcon, "circle-alert");
         tokenHint.createSpan({ text: "创建 Classic Token 时，请勾选 repo、read:org 和 gist；仅当需要同步 GitHub Actions 工作流文件时，再勾选 workflow。" });
         let tokenVerifyButton: HTMLButtonElement | undefined;
-        const tokenSetting = new Setting(authCard).setName("GitHub Token").addText((text) => {
-          text.setPlaceholder("粘贴 Token").setValue(this.setupTokenInput);
+        const tokenSetting = new Setting(authCard).setName("GitHub token").addText((text) => {
+          text.setPlaceholder("粘贴 token").setValue(this.setupTokenInput);
           text.inputEl.type = "password";
           text.inputEl.autocomplete = "off";
           text.onChange((value) => { this.setupTokenInput = value; if (tokenVerifyButton) tokenVerifyButton.disabled = this.setupBusy || !value.trim(); });
@@ -4070,7 +4090,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         this.setupLink(tokenSetting.descEl, "前往 GitHub 创建 Token ↗", "https://github.com/settings/tokens");
         new Setting(authCard).addButton((button) => {
           tokenVerifyButton = button.buttonEl;
-          button.setButtonText("已填写 Token，验证授权").setCta().setDisabled(this.setupBusy || !this.setupTokenInput.trim()).onClick(() => {
+          button.setButtonText("已填写 token，验证授权").setCta().setDisabled(this.setupBusy || !this.setupTokenInput.trim()).onClick(() => {
             const token = this.setupTokenInput;
             this.setupTokenInput = "";
             this.verifySetupAuthorization(() => this.plugin.authorizeSetupWithToken(token), "GitHub Token 已通过 GitHub CLI 核验。");
@@ -4101,12 +4121,12 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     for (const mode of ["existing", "create"] as const) {
       const selected = this.setupRepoMode === mode;
       const button = options.createEl("button", { text: mode === "existing" ? "使用已有 GitHub 仓库" : "新建 GitHub 私人仓库", cls: `zoey-sync-setup-option${selected ? " is-selected" : ""}`, attr: { type: "button", "aria-pressed": String(selected) } });
-      button.addEventListener("click", () => { this.setupRepoMode = mode; this.setupMessage = ""; this.setupFailure = false; this.display(); });
+      button.addEventListener("click", () => { this.setupRepoMode = mode; this.setupMessage = ""; this.setupFailure = false; this.renderSettings(); });
     }
     const card = body.createDiv({ cls: "zoey-sync-setup-detail" });
     if (this.setupRepoMode === "existing") {
-      card.createEl("h4", { text: "核验已有 GitHub 仓库" });
-      card.createEl("p", { text: "在已有 GitHub 仓库页面点击「Code」，复制 HTTPS 地址并填入下方。" });
+      new Setting(card).setName("核验已有 GitHub 仓库").setHeading();
+      card.createEl("p", { text: "在已有 GitHub 仓库页面点击「code」，复制 HTTPS 地址并填入下方。" });
       card.createEl("p", { text: "核验会检查仓库是否为私有，以及当前登录账号是否具有写入权限。", cls: "zoey-sync-setup-helper" });
       const repoUrlSetting = new Setting(card).setName("GitHub 仓库地址").addText((text) => text.setPlaceholder("https://github.com/user/vault.git").setValue(this.setupRepoInput).onChange((value) => { this.setupRepoInput = value.trim(); }));
       repoUrlSetting.settingEl.addClass("zoey-sync-setup-repo-url");
@@ -4117,9 +4137,9 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         .settingEl.addClass("zoey-sync-setup-action", "zoey-sync-setup-check-action", "zoey-sync-setup-auth-submit");
     } else {
       const heading = card.createDiv({ cls: "zoey-sync-setup-section-header" });
-      heading.createEl("h4", { text: "创建 GitHub 新仓库" });
-      card.createEl("p", { text: "填写仓库名称后，插件会在当前 GitHub 账号下创建一个空的 Private（私人）仓库。此时不会推送本地文件。" });
-      new Setting(card).setName("新仓库名称").addText((text) => text.setPlaceholder("例如 my-obsidian-vault").setValue(this.setupRepoNameInput).onChange((value) => { this.setupRepoNameInput = value.trim(); })).settingEl.addClass("zoey-sync-setup-repo-name");
+      new Setting(heading).setName("创建 GitHub 新仓库").setHeading();
+      card.createEl("p", { text: "填写仓库名称后，插件会在当前 GitHub 账号下创建一个空的 private（私人）仓库。此时不会推送本地文件。" });
+      new Setting(card).setName("新仓库名称").addText((text) => text.setPlaceholder("例如 my-Obsidian-vault").setValue(this.setupRepoNameInput).onChange((value) => { this.setupRepoNameInput = value.trim(); })).settingEl.addClass("zoey-sync-setup-repo-name");
       new Setting(card).addButton((button) => button.setButtonText("创建私人仓库").setCta().setDisabled(this.setupBusy).onClick(() => void this.runSetup(async () => {
         try { await this.plugin.createSetupRepository(this.setupRepoNameInput); }
         finally { this.setupRepoInput = this.plugin.settings.setupRepoUrl; }
@@ -4198,7 +4218,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
       if (preview.alreadyLinked) body.createEl("p", { text: "本机已包含 GitHub 的提交记录，可以继续核对文件。", cls: "zoey-sync-setup-done" });
       else if (preview.relatedHistory) body.createEl("p", { text: "两端有共同历史；完成接入时会合并 GitHub 的新提交，冲突会停下等待处理。", cls: "zoey-sync-section-desc" });
       body.createEl("p", { text: preview.localRoot ? `本机分支：${preview.localBranch} · GitHub 分支：${preview.branch}` : `当前 Vault 还没有 Git 仓库；完成接入时会创建 ${preview.branch} 分支。`, cls: "zoey-sync-section-desc" });
-      body.createEl("h4", { text: "Git 忽略规则", cls: "zoey-sync-subsection-title" });
+      new Setting(body).setName("Git 忽略规则").setHeading();
       const ignoreDiffers = setupIgnoreDiffers(preview);
       const ignoreChoice = this.plugin.getSetupChoices()[".gitignore"];
       if (ignoreDiffers) {
@@ -4218,9 +4238,9 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         }
         const comparison = body.createEl("details", { cls: "zoey-sync-setup-files" });
         comparison.createEl("summary", { text: "查看两端 .gitignore 详情" });
-        comparison.createEl("h4", { text: "本机" });
+        new Setting(comparison).setName("本机").setHeading();
         comparison.createEl("pre", { text: preview.localIgnore || "（空）" });
-        comparison.createEl("h4", { text: "远端" });
+        new Setting(comparison).setName("远端").setHeading();
         comparison.createEl("pre", { text: preview.remoteIgnore || "（空）" });
       }
       if (ignoreDiffers && !ignoreChoice) body.createEl("p", { text: "以下为本机基准的预览；请选择基准后确认重建。", cls: "zoey-sync-section-desc" });
@@ -4246,7 +4266,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
             .setDesc("按优化后的规则重建 Git 追踪。本机文件保留；此操作提交并推送后，会改变远端的文件追踪。")
             .addButton((button) => button.setButtonText("根据建议重建 Git 追踪").setDisabled(ignoreDiffers && !ignoreChoice).onClick(() => {
               this.setupTrackingPending = true;
-              this.display();
+              this.renderSettings();
             }));
           trackingSetting.settingEl.addClass("zoey-sync-setup-tracking-setting");
           if (this.setupTrackingPending) {
@@ -4254,8 +4274,8 @@ class ZoeySyncSettingTab extends PluginSettingTab {
             detail.createEl("summary", { text: "展开查看重建详情" });
             detail.createEl("p", { text: "这里确认重建计划；实际重建在完成接入时执行。取消则保留现有追踪。" });
             detail.createEl("p", { text: "建议规则按用途归类。附件、个人目录及原有例外规则不会新增为通用建议；完整规则保留原有顺序。" });
-            for (const group of setupIgnoreRuleGroups(preview)) {
-              detail.createEl("h4", { text: group.title });
+            for (const group of setupIgnoreRuleGroups(preview, this.plugin.app.vault.configDir)) {
+              new Setting(detail).setName("").setHeading();
               detail.createEl("pre", { text: [...new Set(group.rules)].join("\n") });
             }
             const original = detail.createEl("details", { cls: "zoey-sync-setup-files" });
@@ -4284,7 +4304,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
           });
         }
       }
-      body.createEl("h4", { text: "文件差异", cls: "zoey-sync-subsection-title" });
+      new Setting(body).setName("文件差异").setHeading();
       this.setupFileList(body, "仅本地文件", preview.localOnly);
       this.setupFileList(body, "仅远端文件", preview.remoteOnly);
       if (this.plugin.settings.setupComplete) this.setupFileList(body, "同名文件", preview.overlaps);
@@ -4319,7 +4339,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     if (paths.length === 0) return;
     const details = body.createEl("details", { cls: "zoey-sync-setup-files" });
     details.createEl("summary", { text: `${title}（${paths.length}）` });
-    for (const path of paths.slice(0, 200)) details.createEl("div", { text: path });
+    for (const path of paths.slice(0, 200)) details.createDiv({ text: path });
     if (paths.length > 200) details.createEl("p", { text: `还有 ${paths.length - 200} 个文件未在这里展开。` });
   }
 
@@ -4396,13 +4416,13 @@ class ZoeySyncSettingTab extends PluginSettingTab {
     const preview = this.currentDevice() !== "git";
     containerEl.createEl("p", { text: "通常不需要修改", cls: "zoey-sync-advanced-intro" });
     const advancedBody = containerEl.createDiv({ cls: "zoey-sync-card zoey-sync-advanced__body" });
-    advancedBody.createEl("h4", { text: "界面设置", cls: "zoey-sync-subsection-title" });
+    new Setting(advancedBody).setName("界面设置").setHeading();
     const versionViewSetting = new Setting(advancedBody)
-      .setName("显示待 Commit 列表")
-      .setDesc("在同步按钮旁显示待上传和待 Commit 切换。关闭时只显示待上传文件。");
+      .setName("显示待 commit 列表")
+      .setDesc("在同步按钮旁显示待上传和待 commit 切换。关闭时只显示待上传文件。");
     const versionViewIcon = versionViewSetting.nameEl.createSpan({ cls: "zoey-sync-setting-mode-icon" });
-    versionViewIcon.innerHTML =
-      '<svg viewBox="0 0 32 18" aria-hidden="true"><g><circle cx="7.5" cy="9" r="5.25"/><path d="m4.9 9.1 1.7 1.7 3.5-3.8"/></g><path class="mode-divider" d="M16 3.25v11.5"/><g><path d="M23.75 11.75v-7.5"/><path d="m20.75 7.25 3-3 3 3"/><path d="M19.25 12.75v1.5h9v-1.5"/></g></svg>';
+    addIcon("simple-link-mode-setting", '<svg viewBox="0 0 32 18" aria-hidden="true"><g><circle cx="7.5" cy="9" r="5.25"/><path d="m4.9 9.1 1.7 1.7 3.5-3.8"/></g><path class="mode-divider" d="M16 3.25v11.5"/><g><path d="M23.75 11.75v-7.5"/><path d="m20.75 7.25 3-3 3 3"/><path d="M19.25 12.75v1.5h9v-1.5"/></g></svg>');
+    setIcon(versionViewIcon, "simple-link-mode-setting");
     versionViewSetting.nameEl.prepend(versionViewIcon);
     versionViewSetting.addToggle((toggle) =>
       toggle
@@ -4410,9 +4430,9 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         .onChange((value) => void this.plugin.setVersionViewSwitcher(value))
     );
 
-    advancedBody.createEl("h4", { text: "文件追踪", cls: "zoey-sync-subsection-title" });
+    new Setting(advancedBody).setName("文件追踪").setHeading();
     new Setting(advancedBody).setName("按忽略规则修复追踪")
-      .setDesc("先检查 .gitignore 和已追踪文件，再只让应忽略的文件退出 Git 跟踪。本机文件保留；不会立即 Commit 或 Push。若有未解决的合并冲突，请先处理。")
+      .setDesc("先检查 .gitignore 和已追踪文件，再只让应忽略的文件退出 Git 跟踪。本机文件保留；不会立即 commit 或 push。若有未解决的合并冲突，请先处理。")
       .addButton((button) => button.setButtonText("检查并修复文件追踪").setDisabled(preview).onClick(async () => {
         button.setDisabled(true);
         button.setButtonText("正在检查…");
@@ -4427,10 +4447,10 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         }
       }));
 
-    advancedBody.createEl("h4", { text: "同步时间设置", cls: "zoey-sync-subsection-title" });
+    new Setting(advancedBody).setName("同步时间设置").setHeading();
     new Setting(advancedBody)
       .setName("空闲后汇总变化文件列表（秒）")
-      .setDesc("持续多久没有文件变化后汇总所有变化文件，生成待 Commit／上传列表。")
+      .setDesc("持续多久没有文件变化后汇总所有变化文件，生成待 commit／上传列表。")
       .addText((text) => {
         text.inputEl.type = "number";
         text.inputEl.min = "0.5";
@@ -4441,24 +4461,24 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         });
       });
     new Setting(advancedBody)
-      .setName("空闲后自动 Commit（分钟）")
-      .setDesc("持续多久没有文件变化后创建 Commit。设为 0 可关闭。")
+      .setName("空闲后自动 commit（分钟）")
+      .setDesc("持续多久没有文件变化后创建 commit。设为 0 可关闭。")
       .addText((text) => this.addTimingInput(text, "autoCommitIdleMinutes", 5));
     new Setting(advancedBody)
-      .setName("空闲后自动 Push（分钟）")
-      .setDesc("有待上传 Commit 时，持续多久没有文件变化后 Fetch、按需 Merge 并 Push；不会提前自动 Commit。设为 0 可关闭。")
+      .setName("空闲后自动 push（分钟）")
+      .setDesc("有待上传 commit 时，持续多久没有文件变化后 fetch、按需 merge 并 push；不会提前自动 commit。设为 0 可关闭。")
       .addText((text) => this.addTimingInput(text, "autoPushIdleMinutes", 30));
     new Setting(advancedBody)
-      .setName("强制 Commit 间隔（分钟）")
-      .setDesc("从首次检测到未提交改动起，到点即 Commit 当前所有本机改动，不再等待空闲。设为 0 可关闭。")
+      .setName("强制 commit 间隔（分钟）")
+      .setDesc("从首次检测到未提交改动起，到点即 commit 当前所有本机改动，不再等待空闲。设为 0 可关闭。")
       .addText((text) => this.addTimingInput(text, "maxUncommittedMinutes", 30));
     new Setting(advancedBody)
-      .setName("强制 Push 间隔（分钟）")
-      .setDesc("最早的待上传 Commit 到点后，先强制 Commit 当前本机更改（包括正在编辑的文件），再 Fetch、按需 Merge 并 Push。设为 0 可关闭。")
+      .setName("强制 push 间隔（分钟）")
+      .setDesc("最早的待上传 commit 到点后，先强制 commit 当前本机更改（包括正在编辑的文件），再 fetch、按需 merge 并 push。设为 0 可关闭。")
       .addText((text) => this.addTimingInput(text, "maxUnpushedMinutes", 60));
     new Setting(advancedBody)
-      .setName("启动后自动 Commit、Fetch 并 Merge")
-      .setDesc("启动后先 Commit 当前本机改动，再获取云端最新提交并合并到本机；不会立即 Push。")
+      .setName("启动后自动 commit、fetch 并 merge")
+      .setDesc("启动后先 commit 当前本机改动，再获取云端最新提交并合并到本机；不会立即 push。")
       .addToggle((toggle) =>
         toggle.setValue(this.plugin.settings.pullOnStartup).onChange(async (value) => {
           this.plugin.settings.pullOnStartup = value;
@@ -4466,11 +4486,11 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         })
       );
     new Setting(advancedBody)
-      .setName("自动 Fetch 与 Merge 间隔（分钟）")
-      .setDesc("按此时间间隔获取云端最新提交并合并到本机；不会执行 Push。设为 0 可关闭。")
+      .setName("自动 fetch 与 merge 间隔（分钟）")
+      .setDesc("按此时间间隔获取云端最新提交并合并到本机；不会执行 push。设为 0 可关闭。")
       .addText((text) => this.addTimingInput(text, "autoPullIntervalMinutes", 5));
 
-    advancedBody.createEl("h4", { text: "Git 设置", cls: "zoey-sync-subsection-title" });
+    new Setting(advancedBody).setName("Git 设置").setHeading();
     new Setting(advancedBody)
       .setName("分支")
       .setDesc("默认使用 master；只有仓库使用其他分支时才需要修改。")
@@ -4499,10 +4519,10 @@ class ZoeySyncSettingTab extends PluginSettingTab {
         })
       );
 
-    advancedBody.createEl("h4", { text: "故障排查", cls: "zoey-sync-subsection-title" });
+    new Setting(advancedBody).setName("故障排查").setHeading();
     new Setting(advancedBody)
       .setName("异常修复")
-      .setDesc("恢复未完成的 Rebase、Merge 等 Git 操作，以当前本机内容重新 Commit，再 Fetch 并 Merge；不会立即 Push。")
+      .setDesc("恢复未完成的 rebase、merge 等 Git 操作，以当前本机内容重新 commit，再 fetch 并 merge；不会立即 push。")
       .addButton((button) =>
         button.setButtonText("恢复正常同步").setDisabled(preview).onClick(async () => {
           button.setDisabled(true);
@@ -4510,7 +4530,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
           try {
             const operation = await this.plugin.getInterruptedGitOperationLabel();
             if (!operation) {
-              new Notice("Simple Link：没有检测到未完成的 Rebase、Merge、Cherry-pick 或 Revert");
+              new Notice("Simple Link：没有检测到未完成的 rebase、merge、cherry-pick 或 revert");
               return;
             }
             new GitRepairModal(this.app, this.plugin, operation).open();
@@ -4524,7 +4544,7 @@ class ZoeySyncSettingTab extends PluginSettingTab {
       );
     new Setting(advancedBody)
       .setName("本地 Git 历史瘦身")
-      .setDesc("默认保留最近 30 天的本地历史。先联网确认当前 Commit 已上传，再清理本机旧历史；不会删除 GitHub 上的版本。")
+      .setDesc("默认保留最近 30 天的本地历史。先联网确认当前 commit 已上传，再清理本机旧历史；不会删除 GitHub 上的版本。")
       .addButton((button) =>
         button.setButtonText("检查并预览").setDisabled(preview).onClick(async () => {
           button.setDisabled(true);
@@ -4573,4 +4593,9 @@ class ZoeySyncSettingTab extends PluginSettingTab {
       await this.plugin.restartDesktopAutomation();
     });
   }
+}
+
+
+function asyncAction(action: () => Promise<void>): () => void {
+  return () => { void action().catch(error => new Notice(messageOf(error), 8000)); };
 }

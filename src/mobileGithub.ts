@@ -24,7 +24,10 @@ interface PendingTransaction {
   scope: string;
 }
 interface StoredState extends LocalState { pending?: PendingTransaction }
-type ApiObject = Record<string, any>;
+type ApiObject = Record<string, unknown>;
+interface TreeEntry { path: string; type: string; mode: string; sha: string }
+interface CompareEntry { status: string; filename: string; previous_filename: string }
+
 
 export class MobileGithub {
   state: StoredState = newLocalState();
@@ -135,7 +138,11 @@ export class MobileGithub {
     return { ...repo, prefix: `/repos/${repo.owner}/${repo.name}` };
   }
 
-  private async api(path: string, method = "GET", body?: unknown, raw = false): Promise<any> {
+  private async json<T>(path: string, read: (value: unknown) => T, method = "GET", body?: unknown): Promise<T> {
+    return read(await this.api(path, method, body));
+  }
+
+  private async api(path: string, method = "GET", body?: unknown, raw = false): Promise<unknown> {
     const token = this.getOptions().token.trim();
     if (!token) throw new Error("请先填写 GitHub Token。");
     const remainingRevision = this.remainingRevision;
@@ -165,7 +172,7 @@ export class MobileGithub {
       }
       if (!raw) return response.json;
       const type = response.headers["content-type"] ?? response.headers["Content-Type"] ?? "";
-      if (type.includes("json")) return decodeBase64(response.json.content);
+      if (type.includes("json")) return decodeBase64(apiString(apiObject(response.json).content, true));
       return new Uint8Array(response.arrayBuffer);
     } finally { if (timer !== undefined) window.clearTimeout(timer); }
   }
@@ -178,15 +185,15 @@ export class MobileGithub {
 
   async remote(useCompare = false): Promise<RemoteSnapshot> {
     const repo = this.repo();
-    const branch = this.getOptions().branch.trim() || (await this.api(repo.prefix)).default_branch;
+    const branch = this.getOptions().branch.trim() || (await this.json(repo.prefix, readRepo)).default_branch;
     if (!branch) throw new Error("仓库尚无分支，请先在电脑端创建首次提交。");
-    const head = await this.api(`${repo.prefix}/commits/${encodeURIComponent(branch)}`);
+    const head = await this.json(`${repo.prefix}/commits/${encodeURIComponent(branch)}`, readCommit);
     const rootTree = head.commit.tree.sha;
     const renames: Record<string, string> = {};
-    let comparison: ApiObject | undefined;
+    let comparison: ReturnType<typeof readCompare> | undefined;
     if (useCompare && this.state.baseCommitSha) {
       if (head.sha !== this.state.baseCommitSha) {
-        comparison = await this.api(`${repo.prefix}/compare/${this.state.baseCommitSha}...${head.sha}`) as ApiObject;
+        comparison = await this.json(`${repo.prefix}/compare/${this.state.baseCommitSha}...${head.sha}`, readCompare);
         if (!["ahead", "identical"].includes(comparison.status)) throw new Error("远端历史与共同基准不一致，已停止同步，请重新核对仓库。");
         for (const change of comparison.files ?? []) {
           if (change.status === "renamed" && this.allowed(change.previous_filename) && this.allowed(change.filename)) {
@@ -204,7 +211,7 @@ export class MobileGithub {
     }
     const files: Manifest = {};
     const pluginManifests = new Set<string>(); const pluginPrograms = new Set<string>();
-    const collect = (entry: ApiObject, prefix = ""): void => {
+    const collect = (entry: TreeEntry, prefix = ""): void => {
       const path = safePath(prefix + entry.path);
       if (entry.type === "blob" && ["100644", "100755"].includes(entry.mode) && path.startsWith(`${this.configDir}/plugins/`)) {
         const parts = path.slice(`${this.configDir}/plugins/`.length).split("/");
@@ -217,11 +224,11 @@ export class MobileGithub {
         files[path] = { sha: entry.sha, mode: entry.mode };
       } else if (entry.type === "commit") throw new Error(`不支持同步 Git 子模块：${path}`);
     };
-    const tree = await this.api(`${repo.prefix}/git/trees/${rootTree}?recursive=1`);
+    const tree = await this.json(`${repo.prefix}/git/trees/${rootTree}?recursive=1`, readTree);
     if (!tree.truncated) { for (const entry of tree.tree) collect(entry); }
     else {
       const walk = async (sha: string, prefix = ""): Promise<void> => {
-        const subtree = await this.api(`${repo.prefix}/git/trees/${sha}`);
+        const subtree = await this.json(`${repo.prefix}/git/trees/${sha}`, readTree);
         if (subtree.truncated) throw new Error("远端目录清单仍被截断，已停止同步，未推断删除。");
         for (const entry of subtree.tree) {
           if (entry.type === "tree") {
@@ -248,13 +255,13 @@ export class MobileGithub {
 
   async verify(): Promise<RemoteSnapshot> {
     await this.load();
-    const metadata = await this.api(this.repo().prefix);
+    const metadata = await this.json(this.repo().prefix, readRepo);
     if (metadata.permissions?.push === false) throw new Error("当前 Token 没有仓库写入权限，请授予 Contents 读写权限。");
     return await this.remote();
   }
 
   async verifyToken(): Promise<string> {
-    const user = await this.api("/user");
+    const user = await this.json("/user", value => ({ login: apiString(apiObject(value).login) }));
     if (!user.login) throw new Error("未能确认 Token 对应的 GitHub 账号。");
     return user.login;
   }
@@ -262,13 +269,13 @@ export class MobileGithub {
   async verifyAccess(): Promise<RemoteSnapshot> {
     await this.verifyToken();
     const { prefix } = this.repo();
-    const metadata = await this.api(prefix);
+    const metadata = await this.json(prefix, readRepo);
     if (!metadata.private) throw new Error("请选择 GitHub 私人仓库，避免公开笔记。");
     if (metadata.archived || metadata.disabled) throw new Error("仓库已归档或停用，无法同步。");
     if (metadata.permissions?.push === false) throw new Error("当前账号没有仓库写入权限。");
     const branch = this.getOptions().branch.trim() || metadata.default_branch;
     if (!branch) throw new Error("仓库尚无分支，请先在 GitHub 创建 README 或首次提交。");
-    const branchInfo = await this.api(`${prefix}/branches/${encodeURIComponent(branch)}`);
+    const branchInfo = await this.json(`${prefix}/branches/${encodeURIComponent(branch)}`, value => ({ protected: apiBoolean(apiObject(value).protected) }));
     if (branchInfo.protected) throw new Error("该分支受保护，请选择允许直接写入的同步分支。");
     const remote = await this.remote();
     // Test Contents:write with an unattached empty blob, never update a file, commit or branch.
@@ -279,7 +286,7 @@ export class MobileGithub {
   async createPrivateRepository(name: string): Promise<{ url: string; branch: string }> {
     if (!/^[A-Za-z0-9._-]+$/.test(name) || name === "." || name === "..") throw new Error("仓库名称只能包含英文、数字、点、下划线或短横线。");
     await this.verifyToken();
-    const repo = await this.api("/user/repos", "POST", { name, private: true, auto_init: true });
+    const repo = await this.json("/user/repos", readRepo, "POST", { name, private: true, auto_init: true });
     if (!repo.private || !repo.clone_url) throw new Error("未能确认新仓库的私人状态，请到 GitHub 检查创建结果。");
     return { url: parseGithubRepoUrl(repo.clone_url).url, branch: repo.default_branch || "" };
   }
@@ -441,8 +448,8 @@ export class MobileGithub {
         for (const [files, hashes, source] of [[local, localHashes, "local"], [remote.files, remoteHashes, "remote"]] as const) {
           const other = source === "local" ? remote.files : local;
           for (const path of additions) if (files[path] && (!other[path] || sameContent(other[path], files[path]))) {
-            const hash = source === "local" && files[path].rawSha && remoteShas.has(files[path].rawSha!)
-              ? files[path].rawSha! : files[path].sha;
+            const hash = source === "local" && files[path].rawSha && remoteShas.has(files[path].rawSha)
+              ? files[path].rawSha : files[path].sha;
             const group = hashes.get(hash) ?? [];
             group.push({ ...files[path], path, source }); hashes.set(hash, group);
           }
@@ -499,7 +506,8 @@ export class MobileGithub {
   }
 
   private async getBlob(sha: string): Promise<Uint8Array> {
-    const bytes: Uint8Array = await this.api(`${this.repo().prefix}/git/blobs/${sha}`, "GET", undefined, true);
+    const bytes = await this.api(`${this.repo().prefix}/git/blobs/${sha}`, "GET", undefined, true);
+    if (!(bytes instanceof Uint8Array)) throw new Error("GitHub 文件响应格式错误，已停止同步。");
     if (await blobSha(bytes) !== sha) throw new Error("云端文件校验失败，已停止写入。");
     return bytes;
   }
@@ -525,7 +533,7 @@ export class MobileGithub {
       if (plan.scope !== this.scope()) throw new Error("同步范围或仓库设置已变化，请重新预览。");
       if (this.state.revision !== plan.revision) throw new Error("预览后本地发生变化，请重新预览。");
       const repo = this.repo();
-      const head = await this.api(`${repo.prefix}/git/ref/heads/${encodeURIComponent(plan.remote.branch)}`);
+      const head = await this.json(`${repo.prefix}/git/ref/heads/${encodeURIComponent(plan.remote.branch)}`, value => ({ object: readSha(apiObject(value).object) }));
       if (head.object.sha !== plan.remote.commit) throw new Error("预览后云端出现新提交，请重新预览。");
       // Detect external edits and new/deleted files before any remote mutation.
       const live = await scanCurrent(this.adapter, this.state, this.getOptions(), this.allowed, false, this.progress);
@@ -539,7 +547,7 @@ export class MobileGithub {
       let batch: ApiObject[] = []; let batchBytes = 0; let treeSha = plan.remote.tree;
       const flush = async (): Promise<void> => {
         if (!batch.length) return;
-        const tree = await this.api(`${repo.prefix}/git/trees`, "POST", { base_tree: treeSha, tree: batch });
+        const tree = await this.json(`${repo.prefix}/git/trees`, readSha, "POST", { base_tree: treeSha, tree: batch });
         treeSha = tree.sha; batch = []; batchBytes = 0;
       };
       for (const entry of entries) {
@@ -557,7 +565,7 @@ export class MobileGithub {
           const bytes = merged !== undefined ? new TextEncoder().encode(merged) : syncBytes(new Uint8Array(await this.adapter.readBinary(sourcePath!)));
           if (await blobSha(bytes) !== target.sha) throw new Error("上传前本地文件已变化，请重新预览。");
           let text: string | null = null;
-          try { const decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); if (!decoded.includes("\0")) text = decoded; } catch {}
+          try { const decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); if (!decoded.includes("\0")) text = decoded; } catch { /* Non-UTF-8 content is uploaded as a binary blob. */ }
           // Budget uses serialized UTF-8 JSON to account for escaping.
           if (text !== null && bytes.length <= 512000) {
             item.content = text;
@@ -565,7 +573,7 @@ export class MobileGithub {
             if (batchBytes + size > 1024000) await flush();
             batchBytes += size;
           } else {
-            const blob = await this.api(`${repo.prefix}/git/blobs`, "POST", { content: encodeBase64(bytes), encoding: "base64" });
+            const blob = await this.json(`${repo.prefix}/git/blobs`, readSha, "POST", { content: encodeBase64(bytes), encoding: "base64" });
             if (blob.sha !== target.sha) throw new Error("上传内容校验失败。");
             item.sha = blob.sha; known.add(blob.sha);
           }
@@ -582,7 +590,7 @@ export class MobileGithub {
       ];
       let commitSha = plan.remote.commit;
       if (treeSha !== plan.remote.tree) {
-        const commit = await this.api(`${repo.prefix}/git/commits`, "POST", {
+        const commit = await this.json(`${repo.prefix}/git/commits`, readSha, "POST", {
           message: `Simple Link mobile sync ${new Date().toISOString()}`, tree: treeSha, parents: [plan.remote.commit]
         });
         commitSha = commit.sha;
@@ -606,7 +614,7 @@ export class MobileGithub {
       if (remote.commit === pending.parent && pending.commit !== pending.parent) {
         this.state.pending = undefined; await this.save(); return;
       }
-      const diff = await this.api(`${this.repo().prefix}/compare/${pending.commit}...${remote.commit}`);
+      const diff = await this.json(`${this.repo().prefix}/compare/${pending.commit}...${remote.commit}`, readCompare);
       if (!["ahead", "identical"].includes(diff.status)) throw new Error("未完成提交与远端历史不一致，请保留本机状态并检查仓库。");
     }
     // If the user edited a pending target, keep the old common baseline and
@@ -687,4 +695,52 @@ function encodeBase64(bytes: Uint8Array): string {
 function decodeBase64(value: string): Uint8Array {
   const text = atob(value.replace(/\s/g, ""));
   return Uint8Array.from(text, (character) => character.charCodeAt(0));
+}
+
+function apiObject(value: unknown): ApiObject {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("GitHub 响应格式错误，已停止同步。");
+  return value as ApiObject;
+}
+function apiString(value: unknown, allowEmpty = false): string {
+  if (typeof value !== "string" || (!allowEmpty && !value)) throw new Error("GitHub 响应缺少必要字段，已停止同步。");
+  return value;
+}
+function apiBoolean(value: unknown): boolean {
+  if (typeof value !== "boolean") throw new Error("GitHub 响应布尔字段无效，已停止同步。");
+  return value;
+}
+function apiArray<T>(value: unknown, read: (value: unknown) => T): T[] {
+  if (!Array.isArray(value)) throw new Error("GitHub 文件清单无效，已停止同步；不会推断删除。");
+  return value.map(read);
+}
+function readSha(value: unknown): { sha: string } { return { sha: apiString(apiObject(value).sha) }; }
+function readRepo(value: unknown) {
+  const repo = apiObject(value);
+  return { default_branch: repo.default_branch === undefined || repo.default_branch === "" ? "" : apiString(repo.default_branch),
+    private: repo.private === undefined ? false : apiBoolean(repo.private),
+    archived: repo.archived === undefined ? false : apiBoolean(repo.archived),
+    disabled: repo.disabled === undefined ? false : apiBoolean(repo.disabled),
+    clone_url: repo.clone_url === undefined ? "" : apiString(repo.clone_url),
+    permissions: repo.permissions === undefined ? undefined : { push: apiBoolean(apiObject(repo.permissions).push) } };
+}
+function readCommit(value: unknown) {
+  const commit = apiObject(value);
+  return { sha: apiString(commit.sha), commit: { tree: readSha(apiObject(commit.commit).tree) } };
+}
+function readTree(value: unknown) {
+  const tree = apiObject(value);
+  return { truncated: apiBoolean(tree.truncated), tree: apiArray(tree.tree, value => {
+    const entry = apiObject(value);
+    const type = apiString(entry.type);
+    if (!["blob", "tree", "commit"].includes(type)) throw new Error("GitHub 目录条目类型未知，已停止同步；不会推断删除。");
+    return { path: safePath(apiString(entry.path)), sha: apiString(entry.sha), mode: apiString(entry.mode), type };
+  }) };
+}
+function readCompare(value: unknown): { status: string; files: CompareEntry[] } {
+  const compare = apiObject(value);
+  return { status: apiString(compare.status), files: compare.files === undefined ? [] : apiArray(compare.files, value => {
+    const file = apiObject(value);
+    return { status: apiString(file.status), filename: apiString(file.filename),
+      previous_filename: file.status === "renamed" ? apiString(file.previous_filename) : "" };
+  }) };
 }

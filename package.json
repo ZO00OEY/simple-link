@@ -6,12 +6,21 @@
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc --noEmit && node esbuild.config.mjs production",
-    "test": "node scripts/test-dirty.mjs && node scripts/test-onboarding.mjs && node scripts/test-lightweight-guide.mjs && node scripts/test-mobile-sync.mjs && node scripts/test-mobile-runtime.mjs"
+    "test": "node scripts/test-dirty.mjs && node scripts/test-onboarding.mjs && node scripts/test-lightweight-guide.mjs && node scripts/test-mobile-sync.mjs && node scripts/test-mobile-runtime.mjs",
+    "lint": "eslint src --max-warnings 0",
+    "check:css": "node scripts/check-css.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
-    "esbuild": "^0.25.0",
-    "obsidian": "^1.8.0",
+    "esbuild": "^0.28.2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-obsidianmd": "^0.4.2",
+    "obsidian": "^1.13.1",
+    "postcss": "^8.5.28",
+    "postcss-selector-parser": "^7.1.6",
     "typescript": "^5.7.0"
+  },
+  "overrides": {
+    "moment": "^2.31.0"
   }
 }

@@ -1,14 +1,14 @@
-import { DEFAULT_SYNC_IGNORE_PATTERNS, shouldIgnore } from "./dirty";
+import { defaultSyncIgnorePatterns, shouldIgnore } from "./dirty";
 
 const nodeRequire = typeof process !== "undefined" && process.versions?.node
-  ? (globalThis as unknown as { require?: (name: string) => unknown }).require : undefined;
+  ? (window as unknown as { require?: (name: string) => unknown }).require : undefined;
 const fs = nodeRequire ? (nodeRequire("fs") as typeof import("fs")).promises : null;
 const path = nodeRequire ? nodeRequire("path") as typeof import("path") : null;
 
 export interface NestedRepo { directory: string; gitIsDirectory: boolean }
 export type GitCommand = (args: string[]) => Promise<string>;
 
-export async function findNestedRepos(vaultPath: string): Promise<NestedRepo[]> {
+export async function findNestedRepos(vaultPath: string, configDir: string): Promise<NestedRepo[]> {
   if (!fs || !path) throw new Error("内嵌仓库检查仅支持桌面端");
   const found: NestedRepo[] = [];
   const visit = async (folder: string): Promise<void> => {
@@ -21,7 +21,7 @@ export async function findNestedRepos(vaultPath: string): Promise<NestedRepo[]> 
       if (!entry.isDirectory() || entry.name === ".git") continue;
       const absolute = path.join(folder, entry.name);
       const relative = path.relative(vaultPath, absolute).replace(/\\/g, "/");
-      if (!shouldIgnore(relative, DEFAULT_SYNC_IGNORE_PATTERNS)) await visit(absolute);
+      if (!shouldIgnore(relative, defaultSyncIgnorePatterns(configDir), configDir)) await visit(absolute);
     }
   };
   await visit(vaultPath);
@@ -32,7 +32,7 @@ export function nestedGitIgnoreRules(repos: readonly NestedRepo[]): string[] {
   return repos.map((repo) => `/${repo.directory}/.git${repo.gitIsDirectory ? "/" : ""}`);
 }
 
-export async function nestedRepoFiles(vaultPath: string, repos: readonly NestedRepo[], git: GitCommand): Promise<string[]> {
+export async function nestedRepoFiles(vaultPath: string, repos: readonly NestedRepo[], git: GitCommand, configDir: string): Promise<string[]> {
   if (!path || !fs) throw new Error("内嵌仓库检查仅支持桌面端");
   const files: string[] = [];
   let vaultIgnore: string[] = [];
@@ -51,8 +51,8 @@ export async function nestedRepoFiles(vaultPath: string, repos: readonly NestedR
     // Public plugin repositories commonly ignore private data.json. The vault
     // keeps that user configuration unless its own ignore rules exclude it.
     const data = `${repo.directory}/data.json`;
-    if (/^\.obsidian\/plugins\/[^/]+$/.test(repo.directory) &&
-        !shouldIgnore(data, [...DEFAULT_SYNC_IGNORE_PATTERNS, ...vaultIgnore])) {
+    if (repo.directory.startsWith(`${configDir}/plugins/`) && repo.directory.slice(`${configDir}/plugins/`.length).split("/").length === 1 &&
+        !shouldIgnore(data, [...defaultSyncIgnorePatterns(configDir), ...vaultIgnore], configDir)) {
       try { if ((await fs.lstat(path.join(vaultPath, data))).isFile()) files.push(data); }
       catch { /* plugin has no data.json */ }
     }
@@ -62,10 +62,10 @@ export async function nestedRepoFiles(vaultPath: string, repos: readonly NestedR
 
 // A plain `git add -A` records a new embedded repository as a gitlink. Seeding
 // one regular file in the parent index makes later `git add -A` traverse it.
-export async function seedNestedRepoFiles(vaultPath: string, repos: readonly NestedRepo[], git: GitCommand, skip: ReadonlySet<string> = new Set()): Promise<void> {
+export async function seedNestedRepoFiles(vaultPath: string, repos: readonly NestedRepo[], git: GitCommand, configDir: string, skip: ReadonlySet<string> = new Set()): Promise<void> {
   if (!fs || !path) throw new Error("内嵌仓库检查仅支持桌面端");
   const tracked = new Set((await git(["ls-files", "--cached", "-z"])).split("\0").filter(Boolean));
-  const candidates = await nestedRepoFiles(vaultPath, repos, git);
+  const candidates = await nestedRepoFiles(vaultPath, repos, git, configDir);
   const stage = async (file: string): Promise<void> => {
     const info = await fs.stat(path.join(vaultPath, file));
     const mode = info.mode & 0o111 ? "100755" : "100644";
@@ -85,7 +85,7 @@ export async function seedNestedRepoFiles(vaultPath: string, repos: readonly Nes
 }
 
 // Reconcile only embedded repositories. Other staged vault changes are left as-is.
-export async function rebuildNestedRepoTracking(vaultPath: string, repos: readonly NestedRepo[], git: GitCommand): Promise<number> {
+export async function rebuildNestedRepoTracking(vaultPath: string, repos: readonly NestedRepo[], git: GitCommand, configDir: string): Promise<number> {
   if (!repos.length) return 0;
   if (fs && path) {
     try {
@@ -107,8 +107,8 @@ export async function rebuildNestedRepoTracking(vaultPath: string, repos: readon
       await git(["rm", "-f", "--cached", "--", repo.directory]);
     }
   }
-  await seedNestedRepoFiles(vaultPath, repos, git);
-  const files = await nestedRepoFiles(vaultPath, repos, git);
+  await seedNestedRepoFiles(vaultPath, repos, git, configDir);
+  const files = await nestedRepoFiles(vaultPath, repos, git, configDir);
   for (const repo of repos) {
     if (files.some((file) => file.startsWith(`${repo.directory}/`)) ||
         [...before].some((file) => file.startsWith(`${repo.directory}/`))) {

@@ -42,21 +42,21 @@ try {
     else if (path.endsWith("/git/trees/tree")) {
       const note = { path: "note.md", type: "blob", mode: "100644", sha: "blob" };
       if (truncated && request.url.includes("recursive=1")) json = { tree: [], truncated: true };
-      else if (truncated) json = { tree: [note, { path: ".obsidian", type: "tree", sha: "config" }] };
-      else json = { tree: [note, ...(hasCloudPlugins ? cloudFiles : [])], truncated: false };
+      else if (truncated) json = { truncated: false, tree: [note, { path: ".obsidian", type: "tree", mode: "040000", sha: "config" }] };
+      else json = { truncated: false, tree: [note, ...(hasCloudPlugins ? cloudFiles : [])], truncated: false };
     }
-    else if (path.endsWith("/git/trees/config")) json = { tree: [{ path: "plugins", type: "tree", sha: "plugins" }] };
-    else if (path.endsWith("/git/trees/plugins")) json = { tree: hasCloudPlugins ? [
-      { path: "cloud-only", type: "tree", sha: "cloud-only" }, { path: "simple-link", type: "tree", sha: "self" },
+    else if (path.endsWith("/git/trees/config")) json = { truncated: false, tree: [{ path: "plugins", type: "tree", mode: "040000", sha: "plugins" }] };
+    else if (path.endsWith("/git/trees/plugins")) json = { truncated: false, tree: hasCloudPlugins ? [
+      { path: "cloud-only", type: "tree", mode: "040000", sha: "cloud-only" }, { path: "simple-link", type: "tree", mode: "040000", sha: "self" },
       { path: "zoes-plugin.zip", type: "blob", mode: "100644", sha: "archive" },
-      { path: "zoey-sync-test", type: "tree", sha: "legacy" }, { path: "incomplete", type: "tree", sha: "incomplete" }
+      { path: "zoey-sync-test", type: "tree", mode: "040000", sha: "legacy" }, { path: "incomplete", type: "tree", mode: "040000", sha: "incomplete" }
     ] : [] };
-    else if (path.endsWith("/git/trees/cloud-only")) json = { tree: cloudFiles.filter((entry) => entry.path.includes("/cloud-only/"))
+    else if (path.endsWith("/git/trees/cloud-only")) json = { truncated: false, tree: cloudFiles.filter((entry) => entry.path.includes("/cloud-only/"))
       .map((entry) => ({ ...entry, path: entry.path.split("/").pop() })) };
-    else if (path.endsWith("/git/trees/self")) json = { tree: cloudFiles.filter(entry => entry.path.includes("/simple-link/"))
+    else if (path.endsWith("/git/trees/self")) json = { truncated: false, tree: cloudFiles.filter(entry => entry.path.includes("/simple-link/"))
       .map(entry => ({ ...entry, path: entry.path.split("/").pop() })) };
-    else if (path.endsWith("/git/trees/legacy")) json = { tree: [{ path: "sync-settings.json", type: "blob", mode: "100644", sha: "legacy" }] };
-    else if (path.endsWith("/git/trees/incomplete")) json = { tree: [{ path: "manifest.json", type: "blob", mode: "100644", sha: "incomplete" }] };
+    else if (path.endsWith("/git/trees/legacy")) json = { truncated: false, tree: [{ path: "sync-settings.json", type: "blob", mode: "100644", sha: "legacy" }] };
+    else if (path.endsWith("/git/trees/incomplete")) json = { truncated: false, tree: [{ path: "manifest.json", type: "blob", mode: "100644", sha: "incomplete" }] };
     else if (path.endsWith("/git/blobs")) return { status: writeAllowed ? 201 : 403, json: { sha: "empty" }, headers: {} };
     else if (path === "/repos/example/vault") json = { private: privateRepo, default_branch: "main", permissions: { push } };
     else return { status: 404, json: {}, headers: {} };
